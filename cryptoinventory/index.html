@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>クリプトインベントリ(CBOM)</title>
+<title>Crypto Inventory</title>
 <style>
   :root{
     --bg:#f5f6f8; --panel:#fff; --ink:#1c2430; --sub:#5b6675; --line:#d9dee5; --head:#eef1f5;
@@ -30,7 +30,7 @@
   label.inline{flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--ink)}
   input[type=text],input[type=number],input[type=search]{
     font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--ink)}
-  #fname{width:130px} #q{width:min(320px,90vw)}
+  #fname{width:min(360px,90vw)} #q{width:min(320px,90vw)}
   button{font:inherit;padding:7px 14px;border-radius:4px;border:1px solid var(--accent);
     background:var(--accent);color:var(--btn-ink);cursor:pointer}
   button.ghost{background:transparent;color:var(--accent)}
@@ -63,25 +63,36 @@
   .tag.ok{background:var(--ok-bg);color:var(--ok)}
   .tag.na{background:var(--na-bg);color:var(--sub)}
   .empty{padding:24px;color:var(--sub)}
-  .note{margin:0 16px 24px;color:var(--sub);font-size:12px}
-  .hint{margin:10px 0 0;color:var(--sub);font-size:12px}
+  .hint{margin:0 0 10px;color:var(--sub);font-size:12px}
+  .boxTitle{font-size:13px;margin:0 0 8px;color:var(--sub);font-weight:600}
+  .kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0;font-size:13px}
+  .kv dt{color:var(--sub);white-space:nowrap}
+  .kv dd{margin:0;word-break:break-all}
+  .kv dd.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
   .drop{outline:2px dashed var(--accent);outline-offset:-6px}
 </style>
 </head>
 <body>
-<header><h1>クリプトインベントリ(CBOM)</h1></header>
+<header><h1>Crypto Inventory</h1></header>
 
 <section class="panel">
-  <h2>CBOMを読み込む(ローカルフォルダ)</h2>
+  <p class="hint">CBOM(JSON)読み込み</p>
   <div class="row">
-    <button id="pickDir">フォルダを選択</button>
+    <button id="pickFiles">ファイルを選択</button>
     <label>対象ファイル名
-      <input id="fname" type="text" value="cbom.json" spellcheck="false">
+      <input id="fname" type="text" value="" readonly placeholder="(未選択)">
+    </label>
+    <label>SHA-256
+      <input id="fhash" type="text" value="" readonly placeholder="(未選択)" style="width:min(480px,90vw);font-family:ui-monospace,Consolas,monospace">
     </label>
     <button id="clear" class="ghost">クリア</button>
-    <input id="dir" type="file" webkitdirectory multiple>
+    <input id="files" type="file" accept=".json,application/json">
   </div>
-  <p class="hint">選んだフォルダ以下を再帰的に探し、上のファイル名(または cbom*.json)に一致するものを読み込みます。フォルダをこのページへドラッグ&amp;ドロップしてもかまいません。ブラウザに「アップロード」と表示されることがありますが、ファイルはこのブラウザ内で処理され、外部へ送信されません。</p>
+</section>
+
+<section class="panel" id="headerBox" style="display:none">
+  <h2 class="boxTitle">CBOMヘッダー</h2>
+  <dl id="headerList" class="kv"></dl>
 </section>
 
 <div id="status" role="status"></div>
@@ -96,12 +107,16 @@
     <label>絞り込み
       <input id="q" type="search" placeholder="名前、Subject、アルゴリズム、出所など">
     </label>
-    <button id="csv" class="ghost" disabled>表示中の表をCSVで保存</button>
+    <label>期限間近のしきい値
+      <span style="display:flex;align-items:center;gap:4px">
+        <input id="expYears" type="number" min="0" step="1" value="2" style="width:64px">年以内
+      </span>
+    </label>
+    <button id="csv" class="ghost" disabled>CSVで保存</button>
   </div>
 </section>
 
 <div class="wrap"><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
-<p class="note">量子耐性と「弱い暗号」の判定は、名前・パラメータに基づく簡易ルールによる目安です(RSA/ECC/DH系は量子脆弱、ML-KEM/ML-DSA/SLH-DSA系は耐性あり、AES-128は鍵長に注意、など)。TLSやSSHなどのプロトコルは、鍵交換にML-KEM等が見当たらなければ量子脆弱と表示します。方針の判断には一次資料を確認してください。</p>
 
 <script>
 /* ================= 状態 ================= */
@@ -122,7 +137,10 @@ function pqOf(text, level, prim){
   const s = norm(text), pq = RE_PQ.test(s), cl = RE_VULN.test(s.replace(RE_PQ_G, ' '));
   if(pq) return cl ? 'hybrid' : 'safe';
   if(cl) return 'vuln';
-  if(/aes-?128/.test(s)) return 'partial';
+  // 公開鍵方式ではないが、古典的な攻撃で既に危殆化しているもの(SHA-1, MD5, DES/3DES, RC4等)は
+  // 量子耐性が「不明」なのではなく、そもそも古典的に破られていることを明示する
+  if(weakOf(text).length) return 'broken';
+  if(/aes-?128/.test(s)) return 'vuln';
   if(RE_SAFE.test(s)) return 'safe';
   if(typeof level === 'number'){
     if(level > 0) return 'safe';
@@ -130,10 +148,8 @@ function pqOf(text, level, prim){
   }
   return 'unknown';
 }
-const RANK = {vuln:3, partial:2, unknown:1, safe:0, hybrid:0};
+const RANK = {vuln:3, broken:3, unknown:1, safe:0, hybrid:0};
 const worst = (a, b) => RANK[a] >= RANK[b] ? a : b;
-const PQ_LABEL = {vuln:'量子脆弱', safe:'耐性あり', hybrid:'ハイブリッド', partial:'鍵長に注意', unknown:'判定不可'};
-const PQ_CLASS = {vuln:'ng', safe:'ok', hybrid:'ok', partial:'warn', unknown:'na'};
 
 function weakOf(text){
   const s = norm(text), out = [];
@@ -237,57 +253,98 @@ function ingest(bom, src){
 /* ================= 読み込み(SVN / ローカル) ================= */
 const loaded = new Set();
 
-function wanted(path, name){
-  if(/(^|\/)\.svn(\/|$)/.test(path)) return false;
-  const want = $('fname').value.trim().toLowerCase();
-  return name.toLowerCase() === want || /cbom.*\.json$/i.test(name);
-}
-
-async function walkEntry(entry, path, out){
-  if(entry.isFile){
-    const p = path + entry.name;
-    if(!wanted(p, entry.name)) return;
-    out.push({file: await new Promise((res, rej) => entry.file(res, rej)), path: p});
-  } else if(entry.isDirectory){
-    if(entry.name === '.svn') return;
-    const reader = entry.createReader();
-    let batch;
-    do{
-      batch = await new Promise((res, rej) => reader.readEntries(res, rej));
-      for(const e of batch) await walkEntry(e, path + entry.name + '/', out);
-    } while(batch.length);
-  }
-}
-
-async function loadEntries(list){
-  errors = [];
-  $('status').textContent = '読み込み中…';
-  let files = 0, assets = 0;
-  for(const {file, path} of list){
-    if(loaded.has(path)) continue;
-    loaded.add(path); files++;
-    try{ assets += ingest(JSON.parse(await file.text()), path); }
-    catch(e){ errors.push(`${path}: ${e.message}`); }
-  }
-  finish(files
-    ? `CBOM ${files}件から資産 ${assets}件を追加しました(合計 ${rows.length}件)。`
-    : '新しく読み込めるCBOMが見つかりませんでした(ファイル名の設定や、読み込み済みでないかを確認してください)。');
+function showSelectedNames(){
+  const names = [...loaded].map(p => p.split('/').pop());
+  $('fname').value = names.join(', ');
 }
 
 function finish(msg){
   $('status').textContent = msg;
   $('errors').textContent = errors.join('\n');
   $('csv').disabled = !rows.length;
+  showSelectedNames();
   render();
 }
 
-$('pickDir').addEventListener('click', () => $('dir').click());
-$('dir').addEventListener('change', async e => {
-  const list = [...e.target.files]
-    .map(f => ({file:f, path:f.webkitRelativePath || f.name}))
-    .filter(x => wanted(x.path, x.file.name));
+async function sha256Hex(buf){
+  if(!window.crypto?.subtle) return null;
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// components 配列以外の、CBOMのヘッダー(トップレベルのメタ情報)を表示する
+function renderHeader(bom){
+  const items = [];
+  const add = (label, value, mono) => { if(value) items.push({label, value, mono}); };
+
+  add('形式', [bom.bomFormat, bom.specVersion ? 'v' + bom.specVersion : ''].filter(Boolean).join(' '));
+  add('シリアル番号', bom.serialNumber, true);
+  add('バージョン', (bom.version !== undefined && bom.version !== null) ? String(bom.version) : '');
+
+  const ts = bom.metadata?.timestamp;
+  if(ts){
+    const t = Date.parse(ts);
+    add('作成日時', isNaN(t) ? String(ts) : new Date(t).toISOString().replace('T', ' ').slice(0, 16) + ' UTC');
+  }
+
+  const comp = bom.metadata?.component;
+  if(comp && typeof comp === 'object'){
+    add('対象コンポーネント', [comp.name, comp.version, comp.type ? `(${comp.type})` : ''].filter(Boolean).join(' '));
+    add('説明', comp.description);
+  }
+
+  let tools = bom.metadata?.tools;
+  tools = Array.isArray(tools) ? tools : (Array.isArray(tools?.components) ? tools.components : []);
+  const toolNames = tools.map(t => [t?.vendor, t?.name, t?.version].filter(Boolean).join(' ')).filter(Boolean);
+  if(toolNames.length) add('生成ツール', toolNames.join(', '));
+
+  const authors = bom.metadata?.authors;
+  if(Array.isArray(authors) && authors.length){
+    add('作成者', authors.map(a => a?.name).filter(Boolean).join(', '));
+  }
+
+  const total = Array.isArray(bom.components) ? flat(bom.components).length : 0;
+  add('コンポーネント総数(入れ子含む)', total ? String(total) : '');
+
+  const box = $('headerBox'), list = $('headerList');
+  if(!items.length){ box.style.display = 'none'; list.innerHTML = ''; return; }
+  list.innerHTML = items.map(it =>
+    `<dt>${esc(it.label)}</dt><dd class="${it.mono ? 'mono' : ''}">${esc(it.value)}</dd>`).join('');
+  box.style.display = '';
+}
+
+function hideHeader(){
+  $('headerBox').style.display = 'none';
+  $('headerList').innerHTML = '';
+}
+
+async function loadSingle(file, path){
+  rows = []; errors = []; bomCount = 0; riskF = ''; loaded.clear();
+  $('status').textContent = '読み込み中…';
+  $('fhash').value = '';
+  hideHeader();
+  let ok = false;
+  try{
+    const buf = await file.arrayBuffer();
+    const bom = JSON.parse(new TextDecoder('utf-8').decode(buf));
+    ingest(bom, path);
+    loaded.add(path); ok = true;
+    const hash = await sha256Hex(buf);
+    $('fhash').value = hash ?? '(このブラウザでは計算できません)';
+    renderHeader(bom);
+  }
+  catch(e){ errors.push(`${path}: ${e.message}`); }
+  let msg = '';
+  if(!ok) msg = `${path} の読み込みに失敗しました。`;
+  else if(!rows.length) msg = `${path} を読み込みましたが、暗号資産(証明書・鍵など)は見つかりませんでした。`;
+  finish(msg);
+}
+
+$('pickFiles').addEventListener('click', () => $('files').click());
+$('files').addEventListener('change', async e => {
+  const f = e.target.files[0];
   e.target.value = '';
-  await loadEntries(list);
+  if(f) await loadSingle(f, f.name);
 });
 ['dragover', 'dragenter'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); document.body.classList.add('drop'); }));
 document.addEventListener('dragleave', e => { if(!e.relatedTarget) document.body.classList.remove('drop'); });
@@ -296,39 +353,58 @@ document.addEventListener('drop', async e => {
   // DataTransfer は await の前に読み出す必要がある
   const entries = [...(e.dataTransfer.items || [])].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
   const plain = [...e.dataTransfer.files];
-  const list = [];
-  try{
-    if(entries.length) for(const en of entries) await walkEntry(en, '', list);
-    else for(const f of plain) if(wanted(f.name, f.name)) list.push({file:f, path:f.name});
-  } catch(err){ errors.push('フォルダの読み取りに失敗: ' + err.message); }
-  await loadEntries(list);
+  let picked = null, skippedDir = 0, skippedExtra = 0;
+  if(entries.length){
+    for(const entry of entries){
+      if(entry.isFile){ if(!picked) picked = entry; else skippedExtra++; }
+      else skippedDir++; // フォルダは読み込まない
+    }
+    if(picked) await loadSingle(await new Promise((res, rej) => picked.file(res, rej)), picked.name);
+  } else {
+    if(plain.length){ picked = plain[0]; skippedExtra = plain.length - 1; await loadSingle(picked, picked.name); }
+  }
+  if(skippedDir || skippedExtra){
+    if(skippedDir) errors.push(`フォルダが${skippedDir}件ドロップされましたが、読み込みませんでした。ファイルを直接ドロップしてください。`);
+    if(skippedExtra) errors.push(`複数のファイルがドロップされたため、最初の1件だけを読み込みました。`);
+    $('errors').textContent = errors.join('\n');
+  }
 });
 $('clear').addEventListener('click', () => {
-  rows = []; errors = []; bomCount = 0; riskF = ''; loaded.clear(); $('status').textContent = ''; finish('');
+  rows = []; errors = []; bomCount = 0; riskF = ''; loaded.clear();
+  $('status').textContent = ''; $('fhash').value = ''; hideHeader(); finish('');
 });
 
 /* ================= 表示 ================= */
 const fmtDate = s => { const t = Date.parse(s); return isNaN(t) ? esc(s) : new Date(t).toISOString().slice(0, 10); };
-const pqTag = r => `<span class="tag ${PQ_CLASS[r.pq]}">${PQ_LABEL[r.pq]}</span>`;
-const warnTags = r => r.warnAll.map(w => `<span class="tag ng">${esc(w)}</span>`).join('');
+let expThresholdDays = 730; // 期限間近のしきい値(日数)。デフォルト2年
 function daysTag(d){
   if(d === null) return '';
   if(d < 0)  return `<span class="tag ng">期限切れ ${-d}日</span>`;
-  if(d <= 30) return `<span class="tag warn">あと ${d}日</span>`;
+  if(d <= expThresholdDays) return `<span class="tag warn">あと ${d}日</span>`;
   return `<span class="tag ok">${d}日</span>`;
+}
+// 量子耐性・古典的な危殆化・有効期限を、優先度付きの1つのリスクに統合する
+// 数値が大きいほど深刻(表のソートにもそのまま使う)
+function riskOf(r){
+  if(r.pq === 'broken')  return {lv:4, t:'危殆化', cls:'ng'};
+  if(r.pq === 'vuln')    return {lv:4, t:'量子脆弱', cls:'warn'};
+  if(r.pq === 'unknown') return {lv:1, t:'判定不可', cls:'na'};
+  if(r.pq === 'hybrid')  return {lv:0, t:'ハイブリッド', cls:'ok'};
+  return {lv:0, t:'量子安全', cls:'ok'};
 }
 const TYPE_LABEL = {certificate:'証明書', algorithm:'アルゴリズム', material:'鍵・関連素材', protocol:'プロトコル'};
 const C = (k, t, v, h, cls, x) => ({k, t, v, h, cls, x});
 const cSrc  = C('src', '出所', r => r.src);
 const cName = C('name', '名前', r => r.name);
-const cPq   = C('pq', '量子耐性', r => RANK[r.pq], pqTag, '', r => PQ_LABEL[r.pq]);
-const cWarn = C('warn', '注意', r => r.warnAll.length, warnTags, '', r => r.warnAll.join('; '));
 const cDays = C('days', '残り日数', r => r.days, r => daysTag(r.days), 'num');
+const cRisk = C('risk', 'リスク', r => riskOf(r).lv,
+  r => `<span class="tag ${riskOf(r).cls}">${esc(riskOf(r).t)}</span>`, '',
+  r => riskOf(r).t);
 
 const TABS = [
   {id:'all', t:'すべて', cols:[
-    C('type', '種別', r => TYPE_LABEL[r.type]), cName, C('detail', '詳細', r => r.detail), cPq, cWarn, cSrc]},
-  {id:'certificate', t:'証明書', sort:'days', cols:[
+    cSrc, C('type', '種別', r => TYPE_LABEL[r.type]), cName, C('detail', '詳細', r => r.detail), cRisk]},
+  {id:'certificate', t:'証明書', sort:'risk', cols:[
     cSrc, cName,
     C('subject', 'Subject', r => r.p.subject, null, 'dn'),
     C('issuer', 'Issuer', r => r.p.issuer, null, 'dn'),
@@ -337,40 +413,40 @@ const TABS = [
     cDays,
     C('sig', '署名アルゴリズム', r => r.p.sig),
     C('key', '公開鍵', r => r.p.key),
-    cPq, cWarn,
+    cRisk,
     C('fmt', '形式', r => r.p.fmt)]},
   {id:'algorithm', t:'アルゴリズム', cols:[
-    cName,
+    cSrc, cName,
     C('primitive', '用途', r => r.p.primitive),
     C('param', 'ファミリ/パラメータ', r => [r.p.fam, r.p.param].filter(Boolean).join(' ')),
     C('curve', '曲線', r => r.p.curve),
-    C('cl', '古典強度(bit)', r => r.p.cl),
-    C('ql', 'NIST量子レベル', r => r.p.ql),
     C('funcs', '機能', r => r.p.funcs),
-    cPq, cWarn, cSrc]},
+    cRisk]},
   {id:'material', t:'鍵・関連素材', cols:[
-    cName,
+    cSrc, cName,
     C('mtype', '種類', r => r.p.mtype),
     C('algo', 'アルゴリズム', r => r.p.algo),
     C('size', 'サイズ(bit)', r => r.p.size),
     C('state', '状態', r => r.p.state),
     C('exp', '有効期限', r => r.p.exp, r => r.p.exp ? fmtDate(r.p.exp) + ' ' + daysTag(r.days) : '', 'date', r => r.p.exp),
     C('fmt', '形式', r => r.p.fmt),
-    cPq, cWarn, cSrc]},
+    cRisk]},
   {id:'protocol', t:'プロトコル', cols:[
-    cName,
+    cSrc, cName,
     C('ptype', '種類', r => r.p.ptype),
     C('version', 'バージョン', r => r.p.version),
     C('suites', '暗号スイート/構成要素', r => r.p.suites.length,
       r => r.p.suites.slice(0, 3).map(esc).join('<br>') + (r.p.suites.length > 3 ? `<br>他 ${r.p.suites.length - 3}件` : ''),
       'dn', r => r.p.suites.join('; ')),
-    cPq, cWarn, cSrc]},
+    cRisk]},
 ];
 
 const RISK = {
   pq: r => r.pq === 'vuln',
+  broken: r => r.pq === 'broken',
   weak: r => r.weak.length > 0,
-  exp: r => r.days !== null && r.days <= 30,
+  expired: r => r.days !== null && r.days < 0,
+  soon: r => r.days !== null && r.days >= 0 && r.days <= expThresholdDays,
   secret: r => r.secret,
 };
 
@@ -398,8 +474,9 @@ function render(){
   const defs = [
     {f:'', l:'資産の総数', n:rows.length},
     {f:'pq', l:'量子脆弱', n:n(RISK.pq)},
-    {f:'weak', l:'弱い暗号', n:n(RISK.weak)},
-    {f:'exp', l:'期限切れ・30日以内', n:n(RISK.exp)},
+    {f:'broken', l:'危殆化', n:n(RISK.broken)},
+    {f:'expired', l:'期限切れ', n:n(RISK.expired)},
+    {f:'soon', l:'期限間近', n:n(RISK.soon)},
     {f:'secret', l:'鍵の値を含む', n:n(RISK.secret)},
   ];
   $('cards').innerHTML = defs.map(d =>
@@ -422,7 +499,7 @@ function render(){
   $('head').innerHTML = tab.cols.map(c =>
     `<th data-k="${c.k}" tabindex="0" aria-sort="${c.k === key ? (dir > 0 ? 'ascending' : 'descending') : 'none'}">${c.t}</th>`).join('');
   if(!list.length){
-    $('body').innerHTML = `<tr><td colspan="${tab.cols.length}" class="empty">${rows.length ? '条件に合う資産がありません。' : '「フォルダを選択」で、CBOMを含むフォルダを読み込んでください。'}</td></tr>`;
+    $('body').innerHTML = `<tr><td colspan="${tab.cols.length}" class="empty">${rows.length ? '条件に合う資産がありません。' : ''}</td></tr>`;
     return;
   }
   $('body').innerHTML = list.map(r => '<tr>' + tab.cols.map(c =>
@@ -443,6 +520,11 @@ $('head').addEventListener('keydown', e => {
   if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); sortBy(e.target.closest('th')?.dataset.k); }
 });
 $('q').addEventListener('input', render);
+$('expYears').addEventListener('input', () => {
+  const y = parseInt($('expYears').value, 10);
+  expThresholdDays = (Number.isFinite(y) && y >= 0) ? y * 365 : 0;
+  render();
+});
 
 $('csv').addEventListener('click', () => {
   const {tab, list} = visibleRows();
