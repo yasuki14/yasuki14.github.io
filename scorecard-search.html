@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>OpenSSF Scorecard Search</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --panel-border: #e2e5ea;
+    --text: #1a1d23;
+    --text-dim: #6b7280;
+    --accent: #3b6fe0;
+    --good: #1a7f37;
+    --mid: #9a6700;
+    --bad: #cf222e;
+    --none: #6b7280;
+    --overlay-1: rgba(0,0,0,0.025);
+    --overlay-2: rgba(0,0,0,0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-border: #262b36;
+      --text: #e8eaed;
+      --text-dim: #9aa0ac;
+      --accent: #5b8def;
+      --good: #3fb950;
+      --mid: #d29922;
+      --bad: #f85149;
+      --none: #8890a0;
+      --overlay-1: rgba(255,255,255,0.02);
+      --overlay-2: rgba(255,255,255,0.04);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px 16px 80px;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 20px;
+    text-align: center;
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin: 0 0 24px;
+  }
+  .search-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  input[type="text"] {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 15px;
+    outline: none;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 0 20px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .hint {
+    color: var(--text-dim);
+    font-size: 12px;
+    margin-bottom: 24px;
+  }
+  .status {
+    color: var(--text-dim);
+    font-size: 14px;
+    padding: 24px 0;
+    text-align: center;
+  }
+  .status.error { color: var(--bad); }
+  .results {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .card-top {
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .card-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .card-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .card-title a {
+    color: var(--text);
+    font-weight: 700;
+    font-size: 15px;
+    text-decoration: none;
+  }
+  .card-title a:hover { text-decoration: underline; }
+  .stars {
+    color: var(--text-dim);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .desc {
+    color: var(--text-dim);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .meta {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-top: 4px;
+  }
+  .score-box {
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    cursor: default;
+  }
+  .score-box.clickable { cursor: pointer; }
+  .score-box.clickable:hover { filter: brightness(1.15); }
+  .score-box .num { font-size: 20px; line-height: 1; }
+  .score-box .label { font-size: 9px; color: var(--text-dim); margin-top: 3px; }
+  .score-good { background: rgba(63,185,80,0.15); color: var(--good); border: 1px solid rgba(63,185,80,0.35); }
+  .score-mid  { background: rgba(210,153,34,0.15); color: var(--mid); border: 1px solid rgba(210,153,34,0.35); }
+  .score-bad  { background: rgba(248,81,73,0.15); color: var(--bad); border: 1px solid rgba(248,81,73,0.35); }
+  .score-none { background: rgba(75,81,98,0.15); color: var(--none); border: 1px solid rgba(75,81,98,0.35); font-size: 10px; text-align: center; }
+  .score-loading { color: var(--text-dim); font-size: 11px; text-align: center; }
+  .scorecard-link {
+    color: var(--accent);
+    font-size: 11px;
+    text-decoration: none;
+  }
+  .scorecard-link:hover { text-decoration: underline; }
+  .details {
+    display: none;
+    border-top: 1px solid var(--panel-border);
+    padding: 12px 16px 14px;
+    background: var(--overlay-1);
+  }
+  .details.open { display: block; }
+  .details-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .checks-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .checks-table th {
+    text-align: left;
+    color: var(--text-dim);
+    font-weight: 600;
+    padding: 4px 8px 4px 0;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .checks-table td {
+    padding: 6px 8px 6px 0;
+    border-bottom: 1px solid var(--overlay-2);
+    vertical-align: top;
+  }
+  .checks-table tr:last-child td { border-bottom: none; }
+  .check-name { font-weight: 600; white-space: nowrap; }
+  .check-score {
+    font-weight: 700;
+    width: 40px;
+    text-align: center;
+  }
+  .check-reason { color: var(--text-dim); }
+  .check-na { color: var(--text-dim); font-style: italic; }
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--panel-border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-top: 40px;
+  }
+  footer a { color: var(--text-dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OpenSSF Scorecard Search</h1>
+
+  <div class="search-row">
+    <input type="text" id="query" placeholder="例: express, requests, lodash..." autocomplete="off">
+    <button id="searchBtn">検索</button>
+  </div>
+
+  <div id="statusArea"></div>
+  <div class="results" id="results"></div>
+
+  <footer>
+    データ提供: <a href="https://github.com" target="_blank" rel="noopener">GitHub REST API</a> /
+    <a href="https://api.securityscorecards.dev" target="_blank" rel="noopener">OpenSSF Scorecard API</a>
+  </footer>
+</div>
+
+<script>
+const queryInput = document.getElementById('query');
+const searchBtn = document.getElementById('searchBtn');
+const statusArea = document.getElementById('statusArea');
+const resultsEl = document.getElementById('results');
+
+function setStatus(html, isError) {
+  statusArea.innerHTML = html ? `<div class="status${isError ? ' error' : ''}">${html}</div>` : '';
+}
+
+function scoreClass(score) {
+  if (score === null || score === undefined) return 'score-none';
+  if (score >= 7) return 'score-good';
+  if (score >= 4) return 'score-mid';
+  return 'score-bad';
+}
+
+async function fetchScorecard(fullName) {
+  const url = `https://api.securityscorecards.dev/projects/github.com/${fullName}`;
+  try {
+    const res = await fetch(url);
+    if (res.status === 404) {
+      return { status: 'none' };
+    }
+    if (!res.ok) {
+      return { status: 'error', message: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { status: 'ok', score: data.score, date: data.date, checks: data.checks || [] };
+  } catch (e) {
+    return { status: 'error', message: 'ネットワークエラー' };
+  }
+}
+
+function renderChecksTable(checks) {
+  if (!checks || checks.length === 0) {
+    return '<p class="check-na">チェック内訳データがありません。</p>';
+  }
+  const rows = checks.map(c => {
+    const scoreVal = typeof c.score === 'number' ? c.score : -1;
+    const scoreText = scoreVal < 0 ? 'N/A' : scoreVal;
+    const cls = scoreVal < 0 ? '' : (scoreVal >= 7 ? 'color:var(--good)' : scoreVal >= 4 ? 'color:var(--mid)' : 'color:var(--bad)');
+    const docUrl = c.documentation && c.documentation.url ? c.documentation.url : null;
+    const nameHtml = docUrl
+      ? `<a href="${docUrl}" target="_blank" rel="noopener" style="color:inherit">${escapeHtml(c.name)}</a>`
+      : escapeHtml(c.name);
+    return `<tr>
+      <td class="check-name">${nameHtml}</td>
+      <td class="check-score" style="${cls}">${scoreText}</td>
+      <td class="check-reason">${escapeHtml(c.reason || '')}</td>
+    </tr>`;
+  }).join('');
+  return `<table class="checks-table">
+    <thead><tr><th>チェック項目</th><th>点</th><th>理由</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : str;
+  return div.innerHTML;
+}
+
+function renderScoreBox(scoreBox, detailsEl, result, fullName) {
+  const scorecardUrl = `https://scorecard.dev/viewer/?uri=github.com/${fullName}`;
+
+  if (result.status === 'ok' && typeof result.score === 'number') {
+    const cls = scoreClass(result.score);
+    scoreBox.className = 'score-box clickable ' + cls;
+    scoreBox.innerHTML = `<div class="num">${result.score.toFixed(1)}</div><div class="label">/ 10</div>`;
+    scoreBox.title = (result.date ? `評価日: ${result.date}\n` : '') + 'クリックで内訳を表示';
+
+    detailsEl.innerHTML = `
+      <div class="details-header">
+        <span>チェック内訳(評価日: ${escapeHtml(result.date || '不明')})</span>
+        <a class="scorecard-link" href="${scorecardUrl}" target="_blank" rel="noopener">Scorecardページを開く ↗</a>
+      </div>
+      ${renderChecksTable(result.checks)}
+    `;
+    scoreBox.addEventListener('click', () => {
+      detailsEl.classList.toggle('open');
+    });
+  } else if (result.status === 'none') {
+    scoreBox.className = 'score-box score-none';
+    scoreBox.innerHTML = `データなし`;
+    scoreBox.title = 'このリポジトリはScorecardでまだ評価されていません';
+    detailsEl.innerHTML = `
+      <div class="details-header">
+        <span>このリポジトリはまだ評価されていません</span>
+        <a class="scorecard-link" href="${scorecardUrl}" target="_blank" rel="noopener">Scorecardページで確認 ↗</a>
+      </div>
+    `;
+  } else {
+    scoreBox.className = 'score-box score-none clickable';
+    scoreBox.innerHTML = `取得失敗`;
+    scoreBox.title = result.message || '';
+    detailsEl.innerHTML = `
+      <div class="details-header">
+        <span>取得に失敗しました: ${escapeHtml(result.message || '')}</span>
+        <a class="scorecard-link" href="${scorecardUrl}" target="_blank" rel="noopener">Scorecardページで確認 ↗</a>
+      </div>
+    `;
+    scoreBox.addEventListener('click', () => {
+      detailsEl.classList.toggle('open');
+    });
+  }
+}
+
+function renderRepoCard(repo) {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const top = document.createElement('div');
+  top.className = 'card-top';
+
+  const main = document.createElement('div');
+  main.className = 'card-main';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'card-title';
+  const link = document.createElement('a');
+  link.href = repo.html_url;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = repo.full_name;
+  const stars = document.createElement('span');
+  stars.className = 'stars';
+  stars.textContent = `★ ${repo.stargazers_count.toLocaleString()}`;
+  titleRow.appendChild(link);
+  titleRow.appendChild(stars);
+
+  const desc = document.createElement('div');
+  desc.className = 'desc';
+  desc.textContent = repo.description || '(説明なし)';
+  desc.title = repo.description || '';
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = repo.language ? repo.language : '';
+
+  main.appendChild(titleRow);
+  main.appendChild(desc);
+  main.appendChild(meta);
+
+  const scoreBox = document.createElement('div');
+  scoreBox.className = 'score-box score-loading';
+  scoreBox.innerHTML = '<div class="spinner"></div>';
+
+  top.appendChild(main);
+  top.appendChild(scoreBox);
+
+  const details = document.createElement('div');
+  details.className = 'details';
+
+  card.appendChild(top);
+  card.appendChild(details);
+  resultsEl.appendChild(card);
+
+  fetchScorecard(repo.full_name).then(result => renderScoreBox(scoreBox, details, result, repo.full_name));
+}
+
+async function runSearch() {
+  const q = queryInput.value.trim();
+  if (!q) return;
+
+  resultsEl.innerHTML = '';
+  setStatus('検索中...');
+  searchBtn.disabled = true;
+
+  try {
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=10`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/vnd.github+json' } });
+
+    if (res.status === 403) {
+      setStatus('GitHub APIのレート制限に達しました。しばらく待ってから再試行してください。', true);
+      return;
+    }
+    if (!res.ok) {
+      setStatus(`GitHub検索に失敗しました (HTTP ${res.status})`, true);
+      return;
+    }
+
+    const data = await res.json();
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      setStatus('該当するリポジトリが見つかりませんでした。');
+      return;
+    }
+
+    setStatus('');
+    items.forEach(renderRepoCard);
+  } catch (e) {
+    setStatus('通信エラーが発生しました。ネットワーク接続を確認してください。', true);
+  } finally {
+    searchBtn.disabled = false;
+  }
+}
+
+searchBtn.addEventListener('click', runSearch);
+queryInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') runSearch();
+});
+queryInput.focus();
+</script>
+</body>
+</html>
