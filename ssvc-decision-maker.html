@@ -258,9 +258,9 @@ function renderList(){
       const r=typeof x==="number"?x-y:x.localeCompare(y);return r*sort.dir});
   }
   const epCls=v=>{if(v==null||v==="")return"ep-0";const n=parseFloat(v);return n>=0.9?"ep-4":n>=0.75?"ep-3":n>=0.1?"ep-2":"ep-1"};
-  const body=order.map(({it,i})=>{const r=it.result,open=openIds.has(it.id);
+  const body=order.map(({it,i})=>{const r=it.result,open=openIds.has(it.key);
     const sv=(r.cvssBaseSeverity||"").toUpperCase();
-    return `<tr class="trow" data-id="${esc(it.id)}">
+    return `<tr class="trow" data-id="${it.key}">
       <td><span style="color:var(--mut)">${open?"▾":"▸"}</span> <b>${esc(r.cveId)}</b></td>
       <td>${sv?`<span class="dot sv-${/^(CRITICAL|HIGH|MEDIUM|LOW|NONE)$/.test(sv)?sv:"NONE"}"></span>${esc(sv)}`:""}</td>
       <td>${r.epss!=null?`<span class="dot ${epCls(r.epss)}"></span>${esc(r.epss)}`:""}</td>
@@ -318,7 +318,7 @@ function explain(e){
 
 $("#go").onclick=async()=>{
   if(running){ctrl.abort();return}
-  const ids=[...new Set($("#list").value.split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(Boolean))];
+  const ids=$("#list").value.split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
   if(!ids.length)return;
   const key=$("#key").value.trim(),delay=key?700:6500;
   $("#note").textContent=(key||ids.length<2)?"":"NVD API Key 未設定のため、レート制限回避で1件あたり約6.5秒かけて処理します。";
@@ -327,7 +327,7 @@ $("#go").onclick=async()=>{
   for(let i=0;i<ids.length;i++){
     try{
       const raw=await fetchRaw(ids[i],key,ctrl.signal);
-      const it={id:ids[i],raw,vd:gVd()||null,psi:gPsi()||null};recompute(it);items.push(it);prog.done=i+1;
+      const it={id:ids[i],key:String(i),raw,vd:gVd()||null,psi:gPsi()||null};recompute(it);items.push(it);prog.done=i+1;
       render();
       if(i<ids.length-1)await abortableSleep(delay,ctrl.signal);
     }catch(e){
