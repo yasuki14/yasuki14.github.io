@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://cveawg.mitre.org https://services.nvd.nist.gov https://api.first.org; base-uri 'none'; form-action 'none'">
+<title>SSVC Calculator</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1c2330;--mut:#6b7585;--card:#fff;--bd:#dde1e8;--ac:#2f6feb;
+--imm:#d1242f;--ooc:#e8590c;--sch:#c99700;--def:#2f9e44}
+@media(prefers-color-scheme:dark){:root{--bg:#12151b;--fg:#e6e9ef;--mut:#8b95a7;--card:#1a1f28;--bd:#2c3340;--ac:#5b8def}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Hiragino Sans","Yu Gothic",sans-serif}
+main{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--mut);margin:0 0 16px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
+label{display:block;font-size:12px;color:var(--mut);margin-bottom:4px}
+input,select,textarea,button{font:inherit;color:inherit}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:6px;background:var(--bg)}
+textarea{min-height:80px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:12px}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tab{padding:6px 14px;border:1px solid var(--bd);border-radius:6px;background:transparent;cursor:pointer}
+.tab.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+button.pri{background:var(--ac);color:#fff;border:0;border-radius:6px;padding:9px 20px;cursor:pointer;font-weight:600}
+button.sec{background:transparent;border:1px solid var(--bd);border-radius:6px;padding:6px 12px;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+.badge{display:inline-block;padding:3px 12px;border-radius:999px;color:#fff;font-weight:700}
+.Immediate{background:var(--imm)}.Out-of-cycle{background:var(--ooc)}.Scheduled{background:var(--sch)}.Defer{background:var(--def)}.null{background:#8b95a7}
+dl{display:grid;grid-template-columns:200px 1fr;gap:6px 12px;margin:12px 0 0}
+dt{color:var(--mut)}dd{margin:0;word-break:break-all;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+pre{background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:10px;overflow:auto;font-size:12px;margin:12px 0 0}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{border-bottom:1px solid var(--bd);padding:5px 8px;text-align:left;white-space:nowrap}
+.tw{overflow:auto;max-height:420px}
+.err{color:var(--imm);white-space:pre-wrap}
+.warn{color:var(--sch);font-size:12px}
+details.item{border:1px solid var(--bd);border-radius:8px;margin-bottom:8px;background:var(--bg)}
+details.item>summary{display:flex;align-items:center;gap:12px;padding:8px 12px;cursor:pointer;list-style:none;min-width:0}
+details.item>summary::-webkit-details-marker{display:none}
+details.item>summary::before{content:"▸";color:var(--mut)}
+details.item[open]>summary::before{content:"▾"}
+.c-id{font-weight:700;white-space:nowrap}.c-sev,.c-m{color:var(--mut);white-space:nowrap;font-size:12px}
+.c-d{color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.sv-CRITICAL{background:#7d1128}.sv-HIGH{background:#d1242f}.sv-MEDIUM{background:#c99700}.sv-LOW{background:#2f9e44}.sv-NONE{background:#8b95a7}
+.ep-4{background:#d1242f}.ep-3{background:#e8590c}.ep-2{background:#c99700}.ep-1{background:#2f9e44}.ep-0{background:#8b95a7}
+th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--ac)}
+tr.trow{cursor:pointer}tr.trow:hover{background:var(--bg)}
+tr.drow>td{white-space:normal;padding:0;border-bottom:1px solid var(--bd)}
+.tw{max-height:none}
+thead th{position:sticky;top:0;background:var(--card)}
+.detail{padding:4px 12px 12px;border-top:1px solid var(--bd)}
+.hd{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+@media(max-width:560px){dl{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<h1>SSVC Supplier Decision Calculator</h1>
+<p class="sub">CVE.org / NVD / EPSS のデータから SSVC (Supplier) の判定を計算します。すべてブラウザ内で完結します。</p>
+
+<div class="card">
+  <div class="row">
+    <div><label>NVD API Key（任意）</label><input id="key" type="password" placeholder="未設定だとレート制限が厳しくなります" autocomplete="off">
+      <label style="margin:4px 0 0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="keysave" style="width:auto"> このブラウザに保存する（共用PCでは非推奨）</label></div>
+  </div>
+  <label>CVE-ID（1件でも複数でも可。改行・空白・カンマ区切り）</label>
+  <textarea id="list" placeholder="CVE-2025-1235&#10;CVE-2024-3094"></textarea>
+  <div style="margin-top:8px"><button class="pri" id="go">取得</button></div>
+  <p class="warn" id="note"></p>
+</div>
+
+<div class="card" id="params">
+  <div class="row" style="margin-bottom:8px">
+    <div><label>Value Density</label>
+      <select id="vd"><option value="">（未指定）</option><option>diffuse</option><option>concentrated</option></select></div>
+    <div><label>Public Safety Impact</label>
+      <select id="psi"><option value="">（未指定）</option><option>significant</option><option>minimal</option></select></div>
+  </div>
+  <p class="sub" style="margin:0">変更すると取得済みの全件を再取得せずに再計算します。両方指定しないと Utility・Decision・Vector は null です。</p>
+</div>
+
+<div id="out"></div>
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+try{const k=localStorage.getItem("nvdKey");if(k){$("#key").value=k;$("#keysave").checked=true}}catch(e){}
+function persistKey(){try{
+  if($("#keysave").checked&&$("#key").value.trim())localStorage.setItem("nvdKey",$("#key").value.trim());
+  else localStorage.removeItem("nvdKey");
+}catch(e){}}
+$("#key").addEventListener("change",persistKey);$("#keysave").addEventListener("change",persistKey);
+
+// ── 入力検証 ─────────────────────────────────────────
+const validCve=c=>/^CVE-\d{4}-\d{4,}$/i.test(c);
+
+// ── 取得（キャンセル対応） ─────────────────────────────
+async function getJson(url,headers,signal){
+  const r=await fetch(url,{headers,signal});
+  if(!r.ok&&r.status!==404)throw new Error(`HTTP ${r.status} (${new URL(url).host})`);
+  try{return await r.json()}catch(e){if(e.name==="AbortError")throw e;return null}
+}
+const soft=e=>{if(e.name==="AbortError")throw e;return null};
+const abortableSleep=(ms,signal)=>new Promise((res,rej)=>{
+  if(signal.aborted)return rej(new DOMException("Aborted","AbortError"));
+  const t=setTimeout(res,ms);
+  signal.addEventListener("abort",()=>{clearTimeout(t);rej(new DOMException("Aborted","AbortError"))},{once:true});
+});
+
+// ── 計算本体（bash版 jq ロジックの移植） ───────────────
+const first=a=>{for(const v of a)if(v!=null&&v!==false)return v;return null};
+const arr=x=>Array.isArray(x)?x:[];
+function calc(cveorg,nvd,epssData,vd,psi,now){
+  vd=vd||null;psi=psi||null;
+  const cna=cveorg?.containers?.cna||{};
+  const adp=arr(cveorg?.containers?.adp);
+  const nvdCve=nvd?.vulnerabilities?.[0]?.cve;
+  const nvdMetrics=arr(nvd?.vulnerabilities).map(v=>v.cve?.metrics||{});
+  const cnaM=arr(cna.metrics);
+  const adpM=adp.flatMap(a=>arr(a.metrics));
+  const nvdPick=(k,f)=>nvdMetrics.flatMap(m=>arr(m[k])).map(f);
+  const cnaPick=(k,f)=>cnaM.map(m=>m[k]).filter(Boolean).map(f);
+  const adpPick=(k,f)=>adpM.map(m=>m[k]).filter(Boolean).map(f);
+  const order=[["cvssMetricV40","cvssV4_0"],["cvssMetricV31","cvssV3_1"],["cvssMetricV30","cvssV3_0"],["cvssMetricV2","cvssV2"]];
+  const cvssVector=first(order.flatMap(([n,c])=>[
+    ...nvdPick(n,m=>m.cvssData?.vectorString),
+    ...cnaPick(c,m=>m.vectorString),
+    ...adpPick(c,m=>m.vectorString)]));
+  const cvssBaseSeverity=first(order.flatMap(([n,c])=>[
+    ...nvdPick(n,m=>n==="cvssMetricV2"?m.baseSeverity:m.cvssData?.baseSeverity),
+    ...cnaPick(c,m=>m.baseSeverity),
+    ...adpPick(c,m=>m.baseSeverity)]));
+  const opt=key=>first([...cnaM,...adpM].flatMap(m=>arr(m.other?.content?.options).map(o=>o?.[key])));
+
+  const epss=first(arr(epssData?.data).map(d=>d.epss));
+  const ev=parseFloat(epss??"0");
+  const exploitation=opt("Exploitation")??(ev>=0.90?"active":ev>=0.75?"poc":"none");
+  const automatable=opt("Automatable")??(cvssVector&&/UI:N/.test(cvssVector)?"yes":"no");
+  const technicalImpact=opt("Technical Impact")??(cvssVector&&/C:C|I:C|C:H|I:H/.test(cvssVector)?"total":"partial");
+
+  let utility=null;
+  if(vd!=null){
+    if(automatable==="yes"&&vd==="concentrated")utility="super effective";
+    else if(automatable==="yes"&&vd==="diffuse")utility="efficient";
+    else if(automatable==="no"&&vd==="concentrated")utility="efficient";
+    else utility="laborious";
+  }
+  let dec=null;
+  if(utility!=null&&psi!=null){
+    const E=exploitation,U=utility,T=technicalImpact,sig=psi==="significant";
+    if(E==="active"){dec=(U==="super effective"||sig)?"Immediate":"Out-of-cycle"}
+    else if(E==="poc"){
+      if(U==="super effective")dec=sig?"Immediate":"Out-of-cycle";
+      else if(U==="efficient"&&T==="partial")dec=sig?"Immediate":"Scheduled";
+      else if(U==="efficient"&&T==="total")dec=sig?"Immediate":"Out-of-cycle";
+      else if(U==="laborious"&&T==="total")dec=sig?"Immediate":"Scheduled";
+      else if(U==="laborious"&&sig)dec="Out-of-cycle";
+      else dec="Scheduled";
+    }else{
+      if(U==="super effective"&&T==="total")dec="Out-of-cycle";
+      else if(U==="super effective")dec=sig?"Out-of-cycle":"Scheduled";
+      else if(U==="efficient")dec=sig?"Out-of-cycle":"Scheduled";
+      else if(U==="laborious"&&T==="total")dec=sig?"Out-of-cycle":"Scheduled";
+      else if(U==="laborious"&&sig)dec="Scheduled";
+      else dec="Defer";
+    }
+  }
+  const sev=(cvssBaseSeverity||"").toUpperCase();
+  const ssvcDecision=dec==null?null:(exploitation==="none"&&(sev==="LOW"||sev==="MEDIUM")?"Defer":dec);
+  const ts=now.toISOString().replace(/\.\d+Z$/,"Z");
+  const cveId=cveorg?.cveMetadata?.cveId??nvdCve?.id;
+  return{
+    timestamp:ts,cveId,url:"https://www.cve.org/CVERecord?id="+encodeURIComponent(cveId),
+    cveState:cveorg?.cveMetadata?.state??null,
+    nvdStatus:nvdCve?.vulnStatus??null,
+    description:cna.title??cna.descriptions?.[0]?.value??null,
+    cvssBaseSeverity,cvssVector,epss:epss??null,
+    ssvcExploitation:exploitation,ssvcAutomatable:automatable,
+    ssvcValueDensity:vd,ssvcUtility:utility,
+    ssvcTechnicalImpact:technicalImpact,ssvcPublicSafetyImpact:psi,
+    ssvcDecisionModel:"Supplier",ssvcDecision,
+    ssvcVector:(utility==null||psi==null)?null:
+      "SSVCv2.1/E:"+(exploitation==="active"?"A":exploitation==="poc"?"P":"N")+
+      "/U:"+(utility==="super effective"?"S":utility==="efficient"?"E":"L")+
+      "/T:"+(technicalImpact==="total"?"T":"P")+
+      "/PS:"+(psi==="significant"?"S":"M")+"/"+ts+"/"
+  };
+}
+
+
+// API取得のみ（SSVC計算はしない）。VD/PSIは取得後に変更できる。
+async function fetchRaw(cve,key,signal){
+  cve=cve.trim().toUpperCase();
+  if(!validCve(cve))throw new Error(`Invalid CVE-ID '${cve}'. 形式: CVE-YYYY-NNNN`);
+  const [cveorg,nvd,epss]=await Promise.all([
+    getJson(`https://cveawg.mitre.org/api/cve/${cve}`,undefined,signal),
+    getJson(`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${cve}`,key?{apiKey:key}:undefined,signal).catch(soft),
+    getJson(`https://api.first.org/data/v1/epss?cve=${cve}`,undefined,signal).catch(soft)
+  ]);
+  const st=cveorg?.cveMetadata?.state;
+  if(!st||st==="REJECTED")throw new Error(`${cve} は未割り当て、または REJECTED です。`);
+  return{cveorg,nvd,epss};
+}
+
+// ── 状態 ─────────────────────────────────────────────
+let items=[],errors=[],running=false,ctrl=null;
+const gVd=()=>$("#vd").value,gPsi=()=>$("#psi").value;
+function recompute(it){it.result=calc(it.raw.cveorg,it.raw.nvd,it.raw.epss,it.vd,it.psi,new Date())}
+
+// ── 表示（リスト＋展開でカード詳細） ─────────────────────
+const openIds=new Set();
+let sort={k:null,dir:1};
+const csvCell=v=>{let t=String(v??"");if(/^[=+\-@\t\r]/.test(t))t="'"+t;return `"${t.replace(/"/g,'""')}"`};
+function card(it,i){
+  const r=it.result;
+  const rows=Object.entries(r).map(([k,v])=>`<dt>${k}</dt><dd>${k==="url"?`<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>`:esc(v===null?"null":v)}</dd>`).join("");
+  const warn=(it.psi&&!it.vd)?`<p class="warn">Public Safety Impact を使うには Value Density も指定してください。</p>`:"";
+  return `<div class="detail"><div class="hd"><b>${esc(r.cveId)}</b> <button class="sec" data-cp="${i}">JSON をコピー</button></div>
+    <p style="margin:8px 0 0">${esc(r.description||"")}</p>${warn}<dl>${rows}</dl>
+    <pre>${esc(JSON.stringify(r,null,2))}</pre></div>`;
+}
+function renderList(){
+  if(!items.length&&!errors.length){$("#out").innerHTML=running?`<div class="card">取得中…</div>`:"";return}
+  const RK={sev:["CRITICAL","HIGH","MEDIUM","LOW","NONE"],dec:["Immediate","Out-of-cycle","Scheduled","Defer"],exp:["active","poc","none"],
+    yn:["yes","no"],ti:["total","partial"],ut:["super effective","efficient","laborious"]};
+  // k: 結果のキー / t: s=文字列, n=数値, 配列=重要度順（先頭が最優先）/ d: 初回クリック時の向き
+  const COLSD=[{h:"CVE ID",k:"cveId",t:"s",d:1},{h:"Severity",k:"cvssBaseSeverity",t:RK.sev,d:1},
+    {h:"EPSS",k:"epss",t:"n",d:-1},{h:"Decision",k:"ssvcDecision",t:RK.dec,d:1},
+    {h:"Exploitation",k:"ssvcExploitation",t:RK.exp,d:1},
+    {h:"Automatable",k:"ssvcAutomatable",t:RK.yn,d:1},{h:"Tech Impact",k:"ssvcTechnicalImpact",t:RK.ti,d:1},
+    {h:"Utility",k:"ssvcUtility",t:RK.ut,d:1},{h:"CVSS Vector",k:"cvssVector",t:"s",d:1},{h:"SSVC Vector",k:"ssvcVector",t:"s",d:1}];
+  const th=COLSD.map(c=>c.h);
+  let order=items.map((it,i)=>({it,i}));
+  if(sort.k){
+    const c=COLSD.find(x=>x.k===sort.k);
+    const val=r=>{let v=r[c.k];if(v==null||v==="")return null;
+      if(c.t==="n")return parseFloat(v);
+      if(Array.isArray(c.t)){const x=c.t.indexOf(c.t===RK.sev?String(v).toUpperCase():v);return x<0?c.t.length:x}
+      return String(v)};
+    order.sort((a,b)=>{const x=val(a.it.result),y=val(b.it.result);
+      if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
+      const r=typeof x==="number"?x-y:x.localeCompare(y);return r*sort.dir});
+  }
+  const epCls=v=>{if(v==null||v==="")return"ep-0";const n=parseFloat(v);return n>=0.9?"ep-4":n>=0.75?"ep-3":n>=0.1?"ep-2":"ep-1"};
+  const body=order.map(({it,i})=>{const r=it.result,open=openIds.has(it.id);
+    const sv=(r.cvssBaseSeverity||"").toUpperCase();
+    return `<tr class="trow" data-id="${esc(it.id)}">
+      <td><span style="color:var(--mut)">${open?"▾":"▸"}</span> <b>${esc(r.cveId)}</b></td>
+      <td>${sv?`<span class="dot sv-${/^(CRITICAL|HIGH|MEDIUM|LOW|NONE)$/.test(sv)?sv:"NONE"}"></span>${esc(sv)}`:""}</td>
+      <td>${r.epss!=null?`<span class="dot ${epCls(r.epss)}"></span>${esc(r.epss)}`:""}</td>
+      <td><span class="dot ${r.ssvcDecision||"null"}"></span>${esc(r.ssvcDecision||"null")}</td>
+      <td>${esc(r.ssvcExploitation)}</td><td>${esc(r.ssvcAutomatable)}</td><td>${esc(r.ssvcTechnicalImpact)}</td>
+      <td>${esc(r.ssvcUtility??"")}</td><td>${esc(r.cvssVector??"")}</td><td>${esc(r.ssvcVector??"")}</td></tr>`
+      +(open?`<tr class="drow"><td colspan="${th.length}">${card(it,i)}</td></tr>`:"");}).join("");
+  const head=COLSD.map(c=>c.k?`<th class="sortable" data-k="${c.k}">${c.h}${sort.k===c.k?(sort.dir>0?" ▲":" ▼"):""}</th>`:`<th></th>`).join("");
+  const list=`<div class="tw"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  const er=errors.map(e=>`<div class="err">${esc(e)}</div>`).join("");
+  const bar=items.length?`<div class="hd"><b>${items.length} 件${running?"（処理中…）":""}</b>
+    <div><button class="sec" id="csv">CSV ダウンロード</button> <button class="sec" id="jsn">JSON ダウンロード</button></div></div>`:"";
+  $("#out").innerHTML=`<div class="card">${bar}<div style="margin-top:${items.length?10:0}px">${list}</div>${er}</div>`;
+  if(!items.length)return;
+  const dl=(name,txt,type)=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([txt],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),10000)};
+  $("#csv").onclick=()=>{
+    const rs=items.map(i=>i.result);
+    const keys=Object.keys(rs[0]);
+    const csv=[keys.map(csvCell).join(","),...rs.map(r=>keys.map(k=>csvCell(r[k])).join(","))].join("\r\n");
+    dl("ssvc.csv","﻿"+csv,"text/csv;charset=utf-8");
+  };
+  $("#jsn").onclick=()=>dl("ssvc.json",JSON.stringify(items.map(i=>i.result),null,2),"application/json");
+}
+const render=renderList;
+$("#out").addEventListener("click",e=>{
+  const b=e.target.closest("[data-cp]");
+  if(b){navigator.clipboard.writeText(JSON.stringify(items[+b.dataset.cp].result,null,2));return}
+  const h=e.target.closest("th.sortable");
+  if(h){const k=h.dataset.k;
+    if(sort.k===k)sort.dir=-sort.dir;
+    else{sort={k,dir:(k==="epss"?-1:1)}}
+    render();return}
+  const tr=e.target.closest("tr.trow");if(!tr)return;
+  const id=tr.dataset.id;openIds.has(id)?openIds.delete(id):openIds.add(id);render();
+});
+
+// 取得後にVD/PSIを変更 → 再取得せず再計算
+$("#vd").onchange=$("#psi").onchange=()=>{
+  items.forEach(it=>{it.vd=gVd()||null;it.psi=gPsi()||null;recompute(it)});
+  if(items.length)render();
+};
+
+function setBusy(b){
+  running=b;
+  const g=$("#go");
+  if(b){g.textContent="キャンセル";g.style.background="var(--imm)"}
+  else{g.textContent="取得";g.style.background=""}
+}
+function explain(e){
+  if(e.name==="AbortError")return "キャンセルしました。";
+  const m=String(e.message||e);
+  return /Failed to fetch|NetworkError|Load failed/i.test(m)
+    ?m+"\n通信に失敗しました。ネットワーク/CORS/拡張機能のブロックを確認してください。":m;
+}
+
+$("#go").onclick=async()=>{
+  if(running){ctrl.abort();return}
+  const ids=[...new Set($("#list").value.split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(Boolean))];
+  if(!ids.length)return;
+  const key=$("#key").value.trim(),delay=key?700:6500;
+  $("#note").textContent=(key||ids.length<2)?"":"NVD API Key 未設定のため、レート制限回避で1件あたり約6.5秒かけて処理します。";
+  ctrl=new AbortController();setBusy(true);items=[];errors=[];openIds.clear();if(ids.length===1)openIds.add(ids[0]);
+  render();
+  for(let i=0;i<ids.length;i++){
+    try{
+      const raw=await fetchRaw(ids[i],key,ctrl.signal);
+      const it={id:ids[i],raw,vd:gVd()||null,psi:gPsi()||null};recompute(it);items.push(it);
+      render();
+      if(i<ids.length-1)await abortableSleep(delay,ctrl.signal);
+    }catch(e){
+      if(e.name==="AbortError"){errors.push(`キャンセルしました（${i}/${ids.length} 件処理済み）`);break}
+      errors.push(`${ids[i]}: ${explain(e)}`);render();
+      if(i<ids.length-1){try{await abortableSleep(delay,ctrl.signal)}catch(_){errors.push(`キャンセルしました（${i+1}/${ids.length} 件処理済み）`);break}}
+    }
+  }
+  setBusy(false);render();
+};
+</script>
+</body>
+</html>
