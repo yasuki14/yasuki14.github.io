@@ -150,11 +150,11 @@ function calc(cveorg,nvd,epssData,vd,psi,now){
   const epss=first(arr(epssData?.data).map(d=>d.epss));
   const ev=parseFloat(epss??"0");
   const exploitation=opt("Exploitation")??(ev>=0.90?"active":ev>=0.75?"poc":"none");
-  const automatable=opt("Automatable")??(cvssVector&&/UI:N/.test(cvssVector)?"yes":"no");
+  const automatable=opt("Automatable")??(cvssVector?(/UI:N/.test(cvssVector)?"yes":"no"):null);
   const technicalImpact=opt("Technical Impact")??(cvssVector?(/C:C|I:C|C:H|I:H/.test(cvssVector)?"total":"partial"):null);
 
   let utility=null;
-  if(vd!=null){
+  if(vd!=null&&automatable!=null){
     if(automatable==="yes"&&vd==="concentrated")utility="super effective";
     else if(automatable==="yes"&&vd==="diffuse")utility="efficient";
     else if(automatable==="no"&&vd==="concentrated")utility="efficient";
@@ -181,7 +181,7 @@ function calc(cveorg,nvd,epssData,vd,psi,now){
     }
   }
   const sev=(cvssBaseSeverity||"").toUpperCase();
-  const ssvcDecision=(dec==null||technicalImpact==null)?null:(exploitation==="none"&&(sev==="LOW"||sev==="MEDIUM")?"Defer":dec);
+  const ssvcDecision=(dec==null||technicalImpact==null||automatable==null)?null:(exploitation==="none"&&(sev==="LOW"||sev==="MEDIUM")?"Defer":dec);
   const ts=now.toISOString().replace(/\.\d+Z$/,"Z");
   const cveId=cveorg?.cveMetadata?.cveId??nvdCve?.id;
   return{
@@ -230,7 +230,7 @@ function card(it,i){
   const r=it.result;
   const rows=Object.entries(r).map(([k,v])=>`<dt>${k}</dt><dd>${k==="url"?`<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>`:esc(v===null?"null":v)}</dd>`).join("");
   const warn=(it.psi&&!it.vd?`<p class="warn">Public Safety Impact を使うには Value Density も指定してください。</p>`:"")
-    +(r.ssvcTechnicalImpact==null?`<p class="warn">CVSS も CNA/ADP の Technical Impact も無いため、Decision は null です。</p>`:"");
+    +((r.ssvcTechnicalImpact==null||r.ssvcAutomatable==null)?`<p class="warn">CVSS も CNA/ADP の ${[r.ssvcAutomatable==null?"Automatable":"",r.ssvcTechnicalImpact==null?"Technical Impact":""].filter(Boolean).join(" / ")} も無いため、Decision は null です。</p>`:"");
   return `<div class="detail"><div class="hd"><b>${esc(r.cveId)}</b> <button class="sec" data-cp="${i}">JSON をコピー</button></div>
     <p style="margin:8px 0 0">${esc(r.description||"")}</p>${warn}<dl>${rows}</dl>
     <pre>${esc(JSON.stringify(r,null,2))}</pre></div>`;
@@ -262,11 +262,11 @@ function renderList(){
     const sv=(r.cvssBaseSeverity||"").toUpperCase();
     return `<tr class="trow" data-id="${it.key}">
       <td><span style="color:var(--mut)">${open?"▾":"▸"}</span> <b>${esc(r.cveId)}</b></td>
-      <td>${sv?`<span class="dot sv-${/^(CRITICAL|HIGH|MEDIUM|LOW|NONE)$/.test(sv)?sv:"NONE"}"></span>${esc(sv)}`:""}</td>
-      <td>${r.epss!=null?`<span class="dot ${epCls(r.epss)}"></span>${esc(r.epss)}`:""}</td>
+      <td>${sv?`<span class="dot sv-${/^(CRITICAL|HIGH|MEDIUM|LOW|NONE)$/.test(sv)?sv:"NONE"}"></span>${esc(sv)}`:"null"}</td>
+      <td>${r.epss!=null?`<span class="dot ${epCls(r.epss)}"></span>${esc(r.epss)}`:"null"}</td>
       <td><span class="dot ${r.ssvcDecision||"null"}"></span>${esc(r.ssvcDecision||"null")}</td>
-      <td>${esc(r.ssvcExploitation)}</td><td>${esc(r.ssvcAutomatable)}</td><td>${esc(r.ssvcTechnicalImpact)}</td>
-      <td>${esc(r.ssvcUtility??"")}</td><td>${esc(r.cvssVector??"")}</td><td>${esc(r.ssvcVector??"")}</td></tr>`
+      <td>${esc(r.ssvcExploitation)}</td><td>${esc(r.ssvcAutomatable??"null")}</td><td>${esc(r.ssvcTechnicalImpact??"null")}</td>
+      <td>${esc(r.ssvcUtility??"null")}</td><td>${esc(r.cvssVector??"null")}</td><td>${esc(r.ssvcVector??"null")}</td></tr>`
       +(open?`<tr class="drow"><td colspan="${th.length}">${card(it,i)}</td></tr>`:"");}).join("");
   const head=COLSD.map(c=>c.k?`<th class="sortable" data-k="${c.k}">${c.h}${sort.k===c.k?(sort.dir>0?" ▲":" ▼"):""}</th>`:`<th></th>`).join("");
   const list=`<div class="tw"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
