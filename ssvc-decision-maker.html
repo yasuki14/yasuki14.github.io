@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://cveawg.mitre.org https://services.nvd.nist.gov https://api.first.org; base-uri 'none'; form-action 'none'">
-<title>SSVC Calculator</title>
+<title>SSVC Supplier Decision Maker</title>
 <style>
 :root{--bg:#f6f7f9;--fg:#1c2330;--mut:#6b7585;--card:#fff;--bd:#dde1e8;--ac:#2f6feb;
 --imm:#d1242f;--ooc:#e8590c;--sch:#c99700;--def:#2f9e44}
@@ -15,6 +15,7 @@ main{max-width:980px;margin:0 auto;padding:20px 16px 60px}
 h1{font-size:20px;margin:0 0 4px}
 .sub{color:var(--mut);margin:0 0 16px;font-size:13px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:16px}
+label a{color:var(--ac)}
 label{display:block;font-size:12px;color:var(--mut);margin-bottom:4px}
 input,select,textarea,button{font:inherit;color:inherit}
 input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--bd);border-radius:6px;background:var(--bg)}
@@ -52,18 +53,20 @@ tr.drow>td{white-space:normal;padding:0;border-bottom:1px solid var(--bd)}
 .tw{max-height:none}
 thead th{position:sticky;top:0;background:var(--card)}
 .detail{padding:4px 12px 12px;border-top:1px solid var(--bd)}
+.foot{margin-top:24px;padding-top:12px;border-top:1px solid var(--bd);color:var(--mut);font-size:12px}
+.foot a{color:var(--ac)}
 .hd{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 @media(max-width:560px){dl{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <main>
-<h1>SSVC Supplier Decision Calculator</h1>
-<p class="sub">CVE.org / NVD / EPSS のデータから SSVC (Supplier) の判定を計算します。すべてブラウザ内で完結します。</p>
+<h1>SSVC Supplier Decision Maker</h1>
+<p class="sub">CVE.org / NVD / EPSS のデータから SSVC (Supplier) の判定を計算します。</p>
 
 <div class="card">
   <div class="row">
-    <div><label>NVD API Key（任意）</label><input id="key" type="password" placeholder="未設定だとレート制限が厳しくなります" autocomplete="off">
+    <div><label>NVD API Key（任意） <a href="https://nvd.nist.gov/developers/request-an-api-key" target="_blank" rel="noopener noreferrer">キーの取得</a></label><input id="key" type="password" placeholder="未設定だとレート制限が厳しくなります" autocomplete="off">
       <label style="margin:4px 0 0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="keysave" style="width:auto"> このブラウザに保存する（共用PCでは非推奨）</label></div>
   </div>
   <label>CVE-ID（1件でも複数でも可。改行・空白・カンマ区切り）</label>
@@ -79,10 +82,17 @@ thead th{position:sticky;top:0;background:var(--card)}
     <div><label>Public Safety Impact</label>
       <select id="psi"><option value="">（未指定）</option><option>significant</option><option>minimal</option></select></div>
   </div>
-  <p class="sub" style="margin:0">変更すると取得済みの全件を再取得せずに再計算します。両方指定しないと Utility・Decision・Vector は null です。</p>
+  <p class="sub" style="margin:0">変更すると取得済みの全件を再取得せずに再計算します。両方指定しないと Utility・Decision・Vector は null です。<br>各項目の意味と判定ロジック: <a href="https://certcc.github.io/SSVC/howto/supplier_tree/" target="_blank" rel="noopener noreferrer" style="color:var(--ac)">SSVC Supplier Decision Tree の説明 (CERT/CC)</a></p>
 </div>
 
 <div id="out"></div>
+
+<footer class="foot">
+  データ提供元:
+  <a href="https://www.cve.org/" target="_blank" rel="noopener noreferrer">CVE.org (CVE Program)</a> /
+  <a href="https://nvd.nist.gov/" target="_blank" rel="noopener noreferrer">NVD (NIST)</a> /
+  <a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">EPSS (FIRST)</a>
+</footer>
 </main>
 
 <script>
@@ -141,7 +151,7 @@ function calc(cveorg,nvd,epssData,vd,psi,now){
   const ev=parseFloat(epss??"0");
   const exploitation=opt("Exploitation")??(ev>=0.90?"active":ev>=0.75?"poc":"none");
   const automatable=opt("Automatable")??(cvssVector&&/UI:N/.test(cvssVector)?"yes":"no");
-  const technicalImpact=opt("Technical Impact")??(cvssVector&&/C:C|I:C|C:H|I:H/.test(cvssVector)?"total":"partial");
+  const technicalImpact=opt("Technical Impact")??(cvssVector?(/C:C|I:C|C:H|I:H/.test(cvssVector)?"total":"partial"):null);
 
   let utility=null;
   if(vd!=null){
@@ -171,7 +181,7 @@ function calc(cveorg,nvd,epssData,vd,psi,now){
     }
   }
   const sev=(cvssBaseSeverity||"").toUpperCase();
-  const ssvcDecision=dec==null?null:(exploitation==="none"&&(sev==="LOW"||sev==="MEDIUM")?"Defer":dec);
+  const ssvcDecision=(dec==null||technicalImpact==null)?null:(exploitation==="none"&&(sev==="LOW"||sev==="MEDIUM")?"Defer":dec);
   const ts=now.toISOString().replace(/\.\d+Z$/,"Z");
   const cveId=cveorg?.cveMetadata?.cveId??nvdCve?.id;
   return{
@@ -184,7 +194,7 @@ function calc(cveorg,nvd,epssData,vd,psi,now){
     ssvcValueDensity:vd,ssvcUtility:utility,
     ssvcTechnicalImpact:technicalImpact,ssvcPublicSafetyImpact:psi,
     ssvcDecisionModel:"Supplier",ssvcDecision,
-    ssvcVector:(utility==null||psi==null)?null:
+    ssvcVector:(utility==null||psi==null||technicalImpact==null)?null:
       "SSVCv2.1/E:"+(exploitation==="active"?"A":exploitation==="poc"?"P":"N")+
       "/U:"+(utility==="super effective"?"S":utility==="efficient"?"E":"L")+
       "/T:"+(technicalImpact==="total"?"T":"P")+
@@ -208,7 +218,7 @@ async function fetchRaw(cve,key,signal){
 }
 
 // ── 状態 ─────────────────────────────────────────────
-let items=[],errors=[],running=false,ctrl=null;
+let items=[],errors=[],running=false,ctrl=null,prog={done:0,total:0};
 const gVd=()=>$("#vd").value,gPsi=()=>$("#psi").value;
 function recompute(it){it.result=calc(it.raw.cveorg,it.raw.nvd,it.raw.epss,it.vd,it.psi,new Date())}
 
@@ -219,13 +229,14 @@ const csvCell=v=>{let t=String(v??"");if(/^[=+\-@\t\r]/.test(t))t="'"+t;return `
 function card(it,i){
   const r=it.result;
   const rows=Object.entries(r).map(([k,v])=>`<dt>${k}</dt><dd>${k==="url"?`<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>`:esc(v===null?"null":v)}</dd>`).join("");
-  const warn=(it.psi&&!it.vd)?`<p class="warn">Public Safety Impact を使うには Value Density も指定してください。</p>`:"";
+  const warn=(it.psi&&!it.vd?`<p class="warn">Public Safety Impact を使うには Value Density も指定してください。</p>`:"")
+    +(r.ssvcTechnicalImpact==null?`<p class="warn">CVSS も CNA/ADP の Technical Impact も無いため、Decision は null です。</p>`:"");
   return `<div class="detail"><div class="hd"><b>${esc(r.cveId)}</b> <button class="sec" data-cp="${i}">JSON をコピー</button></div>
     <p style="margin:8px 0 0">${esc(r.description||"")}</p>${warn}<dl>${rows}</dl>
     <pre>${esc(JSON.stringify(r,null,2))}</pre></div>`;
 }
 function renderList(){
-  if(!items.length&&!errors.length){$("#out").innerHTML=running?`<div class="card">取得中…</div>`:"";return}
+  if(!items.length&&!errors.length){$("#out").innerHTML=running?`<div class="card">取得中… ${prog.done} / ${prog.total} 件</div>`:"";return}
   const RK={sev:["CRITICAL","HIGH","MEDIUM","LOW","NONE"],dec:["Immediate","Out-of-cycle","Scheduled","Defer"],exp:["active","poc","none"],
     yn:["yes","no"],ti:["total","partial"],ut:["super effective","efficient","laborious"]};
   // k: 結果のキー / t: s=文字列, n=数値, 配列=重要度順（先頭が最優先）/ d: 初回クリック時の向き
@@ -260,9 +271,9 @@ function renderList(){
   const head=COLSD.map(c=>c.k?`<th class="sortable" data-k="${c.k}">${c.h}${sort.k===c.k?(sort.dir>0?" ▲":" ▼"):""}</th>`:`<th></th>`).join("");
   const list=`<div class="tw"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
   const er=errors.map(e=>`<div class="err">${esc(e)}</div>`).join("");
-  const bar=items.length?`<div class="hd"><b>${items.length} 件${running?"（処理中…）":""}</b>
-    <div><button class="sec" id="csv">CSV ダウンロード</button> <button class="sec" id="jsn">JSON ダウンロード</button></div></div>`:"";
-  $("#out").innerHTML=`<div class="card">${bar}<div style="margin-top:${items.length?10:0}px">${list}</div>${er}</div>`;
+  const bar=(items.length||running)?`<div class="hd"><b>${prog.done} / ${prog.total} 件${running?"（処理中…）":""}</b>
+    ${items.length?`<div><button class="sec" id="csv">CSV ダウンロード</button> <button class="sec" id="jsn">JSON ダウンロード</button></div>`:""}</div>`:"";
+  $("#out").innerHTML=`<div class="card">${bar}<div style="margin-top:${bar?10:0}px">${list}</div>${er}</div>`;
   if(!items.length)return;
   const dl=(name,txt,type)=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([txt],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),10000)};
   $("#csv").onclick=()=>{
@@ -311,18 +322,18 @@ $("#go").onclick=async()=>{
   if(!ids.length)return;
   const key=$("#key").value.trim(),delay=key?700:6500;
   $("#note").textContent=(key||ids.length<2)?"":"NVD API Key 未設定のため、レート制限回避で1件あたり約6.5秒かけて処理します。";
-  ctrl=new AbortController();setBusy(true);items=[];errors=[];openIds.clear();if(ids.length===1)openIds.add(ids[0]);
+  ctrl=new AbortController();setBusy(true);items=[];errors=[];openIds.clear();prog={done:0,total:ids.length};
   render();
   for(let i=0;i<ids.length;i++){
     try{
       const raw=await fetchRaw(ids[i],key,ctrl.signal);
-      const it={id:ids[i],raw,vd:gVd()||null,psi:gPsi()||null};recompute(it);items.push(it);
+      const it={id:ids[i],raw,vd:gVd()||null,psi:gPsi()||null};recompute(it);items.push(it);prog.done=i+1;
       render();
       if(i<ids.length-1)await abortableSleep(delay,ctrl.signal);
     }catch(e){
       if(e.name==="AbortError"){errors.push(`キャンセルしました（${i}/${ids.length} 件処理済み）`);break}
-      errors.push(`${ids[i]}: ${explain(e)}`);render();
-      if(i<ids.length-1){try{await abortableSleep(delay,ctrl.signal)}catch(_){errors.push(`キャンセルしました（${i+1}/${ids.length} 件処理済み）`);break}}
+      errors.push(`${ids[i]}: ${explain(e)}`);prog.done=i+1;render();
+      if(i<ids.length-1&&validCve(ids[i])){try{await abortableSleep(delay,ctrl.signal)}catch(_){errors.push(`キャンセルしました（${i+1}/${ids.length} 件処理済み）`);break}}
     }
   }
   setBusy(false);render();
