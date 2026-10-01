@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://cveawg.mitre.org https://services.nvd.nist.gov https://api.first.org; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://cveawg.mitre.org https://api.first.org; base-uri 'none'; form-action 'none'">
 <title>SSVC Supplier Decision Maker</title>
 <style>
 :root{--bg:#f6f7f9;--fg:#1c2330;--mut:#6b7585;--card:#fff;--bd:#dde1e8;--ac:#2f6feb;
@@ -62,17 +62,12 @@ thead th{position:sticky;top:0;background:var(--card)}
 <body>
 <main>
 <h1>SSVC Supplier Decision Maker</h1>
-<p class="sub">CVE.org / NVD / EPSS のデータから SSVC (Supplier) の判定を計算します。</p>
+<p class="sub">CVE.org / EPSS のデータから SSVC (Supplier) の判定を計算します。</p>
 
 <div class="card">
-  <div class="row">
-    <div><label>NVD API Key（任意） <a href="https://nvd.nist.gov/developers/request-an-api-key" target="_blank" rel="noopener noreferrer">キーの取得</a></label><input id="key" type="password" placeholder="未設定だとレート制限が厳しくなります" autocomplete="off">
-      <label style="margin:4px 0 0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="keysave" style="width:auto"> このブラウザに保存する（共用PCでは非推奨）</label></div>
-  </div>
   <label>CVE-ID（1件でも複数でも可。改行・空白・カンマ区切り）</label>
   <textarea id="list" placeholder="CVE-2025-1235&#10;CVE-2024-3094"></textarea>
   <div style="margin-top:8px"><button class="pri" id="go">取得</button></div>
-  <p class="warn" id="note"></p>
 </div>
 
 <div class="card" id="params">
@@ -90,7 +85,6 @@ thead th{position:sticky;top:0;background:var(--card)}
 <footer class="foot">
   データ提供元:
   <a href="https://www.cve.org/" target="_blank" rel="noopener noreferrer">CVE.org (CVE Program)</a> /
-  <a href="https://nvd.nist.gov/" target="_blank" rel="noopener noreferrer">NVD (NIST)</a> /
   <a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">EPSS (FIRST)</a>
 </footer>
 </main>
@@ -99,12 +93,6 @@ thead th{position:sticky;top:0;background:var(--card)}
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-try{const k=localStorage.getItem("nvdKey");if(k){$("#key").value=k;$("#keysave").checked=true}}catch(e){}
-function persistKey(){try{
-  if($("#keysave").checked&&$("#key").value.trim())localStorage.setItem("nvdKey",$("#key").value.trim());
-  else localStorage.removeItem("nvdKey");
-}catch(e){}}
-$("#key").addEventListener("change",persistKey);$("#keysave").addEventListener("change",persistKey);
 
 // ── 入力検証 ─────────────────────────────────────────
 const validCve=c=>/^CVE-\d{4}-\d{4,}$/i.test(c);
@@ -125,24 +113,19 @@ const abortableSleep=(ms,signal)=>new Promise((res,rej)=>{
 // ── 計算本体（bash版 jq ロジックの移植） ───────────────
 const first=a=>{for(const v of a)if(v!=null&&v!==false)return v;return null};
 const arr=x=>Array.isArray(x)?x:[];
-function calc(cveorg,nvd,epssData,vd,psi,now){
+function calc(cveorg,epssData,vd,psi,now){
   vd=vd||null;psi=psi||null;
   const cna=cveorg?.containers?.cna||{};
   const adp=arr(cveorg?.containers?.adp);
-  const nvdCve=nvd?.vulnerabilities?.[0]?.cve;
-  const nvdMetrics=arr(nvd?.vulnerabilities).map(v=>v.cve?.metrics||{});
   const cnaM=arr(cna.metrics);
   const adpM=adp.flatMap(a=>arr(a.metrics));
-  const nvdPick=(k,f)=>nvdMetrics.flatMap(m=>arr(m[k])).map(f);
   const cnaPick=(k,f)=>cnaM.map(m=>m[k]).filter(Boolean).map(f);
   const adpPick=(k,f)=>adpM.map(m=>m[k]).filter(Boolean).map(f);
-  const order=[["cvssMetricV40","cvssV4_0"],["cvssMetricV31","cvssV3_1"],["cvssMetricV30","cvssV3_0"],["cvssMetricV2","cvssV2"]];
-  const cvssVector=first(order.flatMap(([n,c])=>[
-    ...nvdPick(n,m=>m.cvssData?.vectorString),
+  const order=["cvssV4_0","cvssV3_1","cvssV3_0","cvssV2"];
+  const cvssVector=first(order.flatMap(c=>[
     ...cnaPick(c,m=>m.vectorString),
     ...adpPick(c,m=>m.vectorString)]));
-  const cvssBaseSeverity=first(order.flatMap(([n,c])=>[
-    ...nvdPick(n,m=>n==="cvssMetricV2"?m.baseSeverity:m.cvssData?.baseSeverity),
+  const cvssBaseSeverity=first(order.flatMap(c=>[
     ...cnaPick(c,m=>m.baseSeverity),
     ...adpPick(c,m=>m.baseSeverity)]));
   const opt=key=>first([...cnaM,...adpM].flatMap(m=>arr(m.other?.content?.options).map(o=>o?.[key])));
@@ -183,11 +166,12 @@ function calc(cveorg,nvd,epssData,vd,psi,now){
   const sev=(cvssBaseSeverity||"").toUpperCase();
   const ssvcDecision=(dec==null||technicalImpact==null||automatable==null)?null:(exploitation==="none"&&(sev==="LOW"||sev==="MEDIUM")?"Defer":dec);
   const ts=now.toISOString().replace(/\.\d+Z$/,"Z");
-  const cveId=cveorg?.cveMetadata?.cveId??nvdCve?.id;
+  const cveId=cveorg?.cveMetadata?.cveId;
   return{
     timestamp:ts,cveId,url:"https://www.cve.org/CVERecord?id="+encodeURIComponent(cveId),
+    nvdUrl:"https://nvd.nist.gov/vuln/detail/"+encodeURIComponent(cveId),
+    euvdUrl:"https://euvd.enisa.europa.eu/vulnerability/"+encodeURIComponent(cveId),
     cveState:cveorg?.cveMetadata?.state??null,
-    nvdStatus:nvdCve?.vulnStatus??null,
     description:cna.title??cna.descriptions?.[0]?.value??null,
     cvssBaseSeverity,cvssVector,epss:epss??null,
     ssvcExploitation:exploitation,ssvcAutomatable:automatable,
@@ -204,23 +188,25 @@ function calc(cveorg,nvd,epssData,vd,psi,now){
 
 
 // API取得のみ（SSVC計算はしない）。VD/PSIは取得後に変更できる。
-async function fetchRaw(cve,key,signal){
+const failNote=e=>/Failed to fetch|NetworkError|Load failed/i.test(String(e.message))
+  ?"通信に失敗しました（CORS・ネットワーク・拡張機能のブロックの可能性）":String(e.message||e);
+async function fetchRaw(cve,signal){
   cve=cve.trim().toUpperCase();
   if(!validCve(cve))throw new Error(`Invalid CVE-ID '${cve}'. 形式: CVE-YYYY-NNNN`);
-  const [cveorg,nvd,epss]=await Promise.all([
+  let epssNote=null;
+  const [cveorg,epss]=await Promise.all([
     getJson(`https://cveawg.mitre.org/api/cve/${cve}`,undefined,signal),
-    getJson(`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${cve}`,key?{apiKey:key}:undefined,signal).catch(soft),
-    getJson(`https://api.first.org/data/v1/epss?cve=${cve}`,undefined,signal).catch(soft)
+    getJson(`https://api.first.org/data/v1/epss?cve=${cve}`,undefined,signal).catch(e=>{soft(e);epssNote=failNote(e);return null})
   ]);
   const st=cveorg?.cveMetadata?.state;
   if(!st||st==="REJECTED")throw new Error(`${cve} は未割り当て、または REJECTED です。`);
-  return{cveorg,nvd,epss};
+  return{cveorg,epss,epssNote};
 }
 
 // ── 状態 ─────────────────────────────────────────────
 let items=[],errors=[],running=false,ctrl=null,prog={done:0,total:0};
 const gVd=()=>$("#vd").value,gPsi=()=>$("#psi").value;
-function recompute(it){it.result=calc(it.raw.cveorg,it.raw.nvd,it.raw.epss,it.vd,it.psi,new Date())}
+function recompute(it){it.result=calc(it.raw.cveorg,it.raw.epss,it.vd,it.psi,new Date())}
 
 // ── 表示（リスト＋展開でカード詳細） ─────────────────────
 const openIds=new Set();
@@ -228,8 +214,9 @@ let sort={k:null,dir:1};
 const csvCell=v=>{let t=String(v??"");if(/^[=+\-@\t\r]/.test(t))t="'"+t;return `"${t.replace(/"/g,'""')}"`};
 function card(it,i){
   const r=it.result;
-  const rows=Object.entries(r).map(([k,v])=>`<dt>${k}</dt><dd>${k==="url"?`<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>`:esc(v===null?"null":v)}</dd>`).join("");
-  const warn=(it.psi&&!it.vd?`<p class="warn">Public Safety Impact を使うには Value Density も指定してください。</p>`:"")
+  const rows=Object.entries(r).map(([k,v])=>`<dt>${k}</dt><dd>${/^(url|nvdUrl|euvdUrl)$/.test(k)?`<a href="${esc(v)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>`:esc(v===null?"null":v)}</dd>`).join("");
+  const notes=(r.epss==null&&it.raw.epssNote?`<p class="warn">EPSS が null の理由: ${esc(it.raw.epssNote)}</p>`:"");
+  const warn=notes+(it.psi&&!it.vd?`<p class="warn">Public Safety Impact を使うには Value Density も指定してください。</p>`:"")
     +((r.ssvcTechnicalImpact==null||r.ssvcAutomatable==null)?`<p class="warn">CVSS も CNA/ADP の ${[r.ssvcAutomatable==null?"Automatable":"",r.ssvcTechnicalImpact==null?"Technical Impact":""].filter(Boolean).join(" / ")} も無いため、Decision は null です。</p>`:"");
   return `<div class="detail"><div class="hd"><b>${esc(r.cveId)}</b> <button class="sec" data-cp="${i}">JSON をコピー</button></div>
     <p style="margin:8px 0 0">${esc(r.description||"")}</p>${warn}<dl>${rows}</dl>
@@ -240,7 +227,7 @@ function renderList(){
   const RK={sev:["CRITICAL","HIGH","MEDIUM","LOW","NONE"],dec:["Immediate","Out-of-cycle","Scheduled","Defer"],exp:["active","poc","none"],
     yn:["yes","no"],ti:["total","partial"],ut:["super effective","efficient","laborious"]};
   // k: 結果のキー / t: s=文字列, n=数値, 配列=重要度順（先頭が最優先）/ d: 初回クリック時の向き
-  const COLSD=[{h:"CVE ID",k:"cveId",t:"s",d:1},{h:"Severity",k:"cvssBaseSeverity",t:RK.sev,d:1},
+  const COLSD=[{h:"#",k:"_n",t:"n",d:1},{h:"CVE ID",k:"cveId",t:"s",d:1},{h:"Severity",k:"cvssBaseSeverity",t:RK.sev,d:1},
     {h:"EPSS",k:"epss",t:"n",d:-1},{h:"Decision",k:"ssvcDecision",t:RK.dec,d:1},
     {h:"Exploitation",k:"ssvcExploitation",t:RK.exp,d:1},
     {h:"Automatable",k:"ssvcAutomatable",t:RK.yn,d:1},{h:"Tech Impact",k:"ssvcTechnicalImpact",t:RK.ti,d:1},
@@ -249,11 +236,11 @@ function renderList(){
   let order=items.map((it,i)=>({it,i}));
   if(sort.k){
     const c=COLSD.find(x=>x.k===sort.k);
-    const val=r=>{let v=r[c.k];if(v==null||v==="")return null;
+    const val=o=>{const r=o.it.result;let v=c.k==="_n"?Number(o.it.key):r[c.k];if(v==null||v==="")return null;
       if(c.t==="n")return parseFloat(v);
       if(Array.isArray(c.t)){const x=c.t.indexOf(c.t===RK.sev?String(v).toUpperCase():v);return x<0?c.t.length:x}
       return String(v)};
-    order.sort((a,b)=>{const x=val(a.it.result),y=val(b.it.result);
+    order.sort((a,b)=>{const x=val(a),y=val(b);
       if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
       const r=typeof x==="number"?x-y:x.localeCompare(y);return r*sort.dir});
   }
@@ -261,6 +248,7 @@ function renderList(){
   const body=order.map(({it,i})=>{const r=it.result,open=openIds.has(it.key);
     const sv=(r.cvssBaseSeverity||"").toUpperCase();
     return `<tr class="trow" data-id="${it.key}">
+      <td style="color:var(--mut)">${Number(it.key)+1}</td>
       <td><span style="color:var(--mut)">${open?"▾":"▸"}</span> <b>${esc(r.cveId)}</b></td>
       <td>${sv?`<span class="dot sv-${/^(CRITICAL|HIGH|MEDIUM|LOW|NONE)$/.test(sv)?sv:"NONE"}"></span>${esc(sv)}`:"null"}</td>
       <td>${r.epss!=null?`<span class="dot ${epCls(r.epss)}"></span>${esc(r.epss)}`:"null"}</td>
@@ -320,13 +308,12 @@ $("#go").onclick=async()=>{
   if(running){ctrl.abort();return}
   const ids=$("#list").value.split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
   if(!ids.length)return;
-  const key=$("#key").value.trim(),delay=key?700:6500;
-  $("#note").textContent=(key||ids.length<2)?"":"NVD API Key 未設定のため、レート制限回避で1件あたり約6.5秒かけて処理します。";
+  const delay=300;
   ctrl=new AbortController();setBusy(true);items=[];errors=[];openIds.clear();prog={done:0,total:ids.length};
   render();
   for(let i=0;i<ids.length;i++){
     try{
-      const raw=await fetchRaw(ids[i],key,ctrl.signal);
+      const raw=await fetchRaw(ids[i],ctrl.signal);
       const it={id:ids[i],key:String(i),raw,vd:gVd()||null,psi:gPsi()||null};recompute(it);items.push(it);prog.done=i+1;
       render();
       if(i<ids.length-1)await abortableSleep(delay,ctrl.signal);
