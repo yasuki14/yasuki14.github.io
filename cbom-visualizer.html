@@ -173,6 +173,13 @@ function daysLeft(iso){
 /* ================= CBOMの取り込み ================= */
 function flat(list, out = []){ for(const c of list || []){ out.push(c); flat(c.components, out); } return out; }
 
+// 出所: CBOM内の evidence.occurrences[].location(その暗号資産が検出されたソースファイル)を優先する。
+// 記載がなければ、読み込んだCBOMファイル名にフォールバックする。
+function srcOf(c, fallback){
+  const locs = (c.evidence?.occurrences || []).map(o => o?.location).filter(l => typeof l === 'string' && l);
+  return locs.length ? uniq(locs).join('; ') : fallback;
+}
+
 function ingest(bom, src){
   if(!bom || !Array.isArray(bom.components)) throw new Error('components がありません(CBOMではない可能性)');
   const comps = flat(bom.components);
@@ -241,7 +248,7 @@ function ingest(bom, src){
         detail:[p.type, p.version].filter(Boolean).join(' ')};
     }
     if(!r) continue;
-    r.name = c.name || ''; r.src = src; r.secret = !!(r.secret || secretBlock);
+    r.name = c.name || ''; r.src = srcOf(c, src); r.secret = !!(r.secret || secretBlock);
     r.warnAll = [...r.weak, ...(r.secret ? ['鍵の値を含む'] : [])];
     r.search = norm([r.type, r.name, r.detail, r.src, ...Object.values(r.p).flat()].join(' '));
     rows.push(r); n++;
