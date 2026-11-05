@@ -70,6 +70,61 @@
   .kv dd{margin:0;word-break:break-all}
   .kv dd.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
   .drop{outline:2px dashed var(--accent);outline-offset:-6px}
+  /* 証明書チェーン */
+  #chainView{margin:0 16px 12px;display:none}
+  .chainBar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px;color:var(--sub);font-size:13px}
+  /* ツリー表示 */
+  .tree,.tree ul{list-style:none;margin:0;padding:0}
+  .tree ul{margin-left:14px}
+  .tree li{position:relative;padding-top:4px}
+  .tree ul>li{padding-left:22px}
+  .tree ul>li::before{content:"";position:absolute;left:0;top:0;bottom:0;border-left:1px solid var(--line)}
+  .tree ul>li:last-child::before{bottom:auto;height:24px}
+  .tree ul>li::after{content:"";position:absolute;left:0;top:24px;width:20px;border-top:1px solid var(--line)}
+  .tree summary{list-style:none;cursor:pointer}
+  .tree summary::-webkit-details-marker{display:none}
+  .tn{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:6px;padding:6px 10px}
+  .tn.root{border-left-color:var(--ok)}
+  .tn.inter{border-left-color:var(--accent)}
+  .tn.leaf{border-left-color:var(--sub)}
+  .tn.miss{border:1px dashed var(--ng);border-left:4px dashed var(--ng)}
+  .tn.bad{box-shadow:inset 0 0 0 1px var(--warn)}
+  .tnTop{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
+  .tnTop .dn{font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all}
+  .tnSub,.tnIss{font-size:12px;margin:2px 0 0 22px;word-break:break-all}
+  .tnSub{color:var(--sub)} .tnIss{color:var(--warn)}
+  .cnt{font-size:12px;color:var(--sub)}
+  /* チェーン図(SVG) */
+  .segs{display:inline-flex;gap:4px}
+  .segs button{padding:3px 12px}
+  .legend{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:12px;color:var(--sub);margin:0 0 8px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+  .lg-root{background:var(--ok)} .lg-inter{background:var(--accent)} .lg-leaf{background:var(--sub)}
+  .lg-miss{border:1px dashed var(--ng)}
+  #diagWrap{overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel);max-height:72vh}
+  #diagSvg{display:block}
+  #diagSvg text{font:12px "Yu Gothic UI","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;fill:var(--ink)}
+  #diagSvg .t-role,#diagSvg .t-sm,#diagSvg .t-sub,#diagSvg .t-na{fill:var(--sub)}
+  #diagSvg .t-role{font-size:10.5px}
+  #diagSvg .t-sm{font-size:11px}
+  #diagSvg .t-name{font-size:13px;font-weight:600}
+  #diagSvg .t-ng{fill:var(--ng)} #diagSvg .t-warn{fill:var(--warn)} #diagSvg .t-ok{fill:var(--ok)}
+  #diagSvg .grp{fill:var(--head);opacity:.55}
+  #diagSvg .ed{fill:none;stroke:var(--sub);stroke-width:1.4}
+  #diagSvg .ed.inf{stroke-dasharray:5 4}
+  #diagSvg .ed.miss{stroke:var(--ng);stroke-dasharray:3 3}
+  #diagSvg .arrow{fill:var(--sub)}
+  #diagSvg .gn{cursor:pointer}
+  #diagSvg .gn .bg{fill:var(--panel);stroke:var(--line);stroke-width:1}
+  #diagSvg .gn.bad .bg{stroke:var(--warn);stroke-width:1.6}
+  #diagSvg .gn.miss .bg{stroke:var(--ng);stroke-dasharray:4 3}
+  #diagSvg .gn .bar{fill:var(--sub)}
+  #diagSvg .gn.root .bar{fill:var(--ok)} #diagSvg .gn.inter .bar{fill:var(--accent)} #diagSvg .gn.miss .bar{fill:var(--ng)}
+  #diagSvg .gn.sel .bg{stroke:var(--accent);stroke-width:2.6}
+  #diagSvg .ed.hl{stroke:var(--accent);stroke-width:2.2}
+  #diagSvg .dim{opacity:.25}
+  .chev{display:inline-block;width:14px;color:var(--sub);transition:transform .12s}
+  details[open]>summary .chev{transform:rotate(90deg)}
 </style>
 </head>
 <body>
@@ -116,13 +171,17 @@
   </div>
 </section>
 
-<div class="wrap"><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
+<div id="chainView"></div>
+
+<div class="wrap" id="tableWrap"><table><thead><tr id="head"></tr></thead><tbody id="body"></tbody></table></div>
 
 <script>
 /* ================= 状態 ================= */
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let rows = [], errors = [], bomCount = 0;
+let depMap = new Map(); // bom-ref -> dependsOn[](証明書チェーンの構築に使う)
+let lastChains = [];    // 直近に表示したチェーン(コピー/CSV用)
 let tabId = 'all', sortK = null, sortDir = 1, riskF = '';
 
 /* ================= 判定ルール ================= */
@@ -187,6 +246,7 @@ function ingest(bom, src){
   comps.forEach(c => { if(c['bom-ref']) byRef.set(c['bom-ref'], c); });
   const nm = ref => ref ? (byRef.get(ref)?.name || ref) : '';
   let n = 0;
+  for(const d of bom.dependencies || []){ if(d && d.ref) depMap.set(d.ref, Array.isArray(d.dependsOn) ? d.dependsOn : []); }
 
   for(const c of comps){
     const cp = c.cryptoProperties;
@@ -248,7 +308,7 @@ function ingest(bom, src){
         detail:[p.type, p.version].filter(Boolean).join(' ')};
     }
     if(!r) continue;
-    r.name = c.name || ''; r.src = srcOf(c, src); r.secret = !!(r.secret || secretBlock);
+    r.name = c.name || ''; r.ref = c['bom-ref'] || ''; r.src = srcOf(c, src); r.secret = !!(r.secret || secretBlock);
     r.warnAll = [...r.weak, ...(r.secret ? ['鍵の値を含む'] : [])];
     r.search = norm([r.type, r.name, r.detail, r.src, ...Object.values(r.p).flat()].join(' '));
     rows.push(r); n++;
@@ -326,7 +386,7 @@ function hideHeader(){
 }
 
 async function loadSingle(file, path){
-  rows = []; errors = []; bomCount = 0; riskF = ''; loaded.clear();
+  rows = []; errors = []; bomCount = 0; riskF = ''; loaded.clear(); depMap = new Map();
   $('status').textContent = '読み込み中…';
   $('fhash').value = '';
   hideHeader();
@@ -377,7 +437,7 @@ document.addEventListener('drop', async e => {
   }
 });
 $('clear').addEventListener('click', () => {
-  rows = []; errors = []; bomCount = 0; riskF = ''; loaded.clear();
+  rows = []; errors = []; bomCount = 0; riskF = ''; loaded.clear(); depMap = new Map();
   $('status').textContent = ''; $('fhash').value = ''; hideHeader(); finish('');
 });
 
@@ -399,6 +459,351 @@ function riskOf(r){
   if(r.pq === 'hybrid')  return {lv:0, t:'ハイブリッド', cls:'ok'};
   return {lv:0, t:'量子安全', cls:'ok'};
 }
+/* ================= 証明書チェーン ================= */
+// DNの表記ゆれ(空白・大文字小文字)を吸収して比較する
+const normDn = s => String(s || '').toLowerCase().replace(/\s*([,=+])\s*/g, '$1').replace(/\s+/g, ' ').trim();
+const isSelfSigned = r => !!r.p.subject && normDn(r.p.subject) === normDn(r.p.issuer);
+const dnLabel = r => r.p.subject || r.name || r.ref || '(名称なし)';
+const ts = s => { const t = Date.parse(s); return isNaN(t) ? null : t; };
+const dateStr = s => { const t = ts(s); return t === null ? String(s ?? '') : new Date(t).toISOString().slice(0, 10); }; // エスケープ無しの日付文字列
+
+// 親(発行元)の特定: ①dependencies の dependsOn にある証明書 ②Issuer＝Subject の一致
+function linkCerts(){
+  const certs = rows.filter(r => r.type === 'certificate');
+  const byRef = new Map(), bySubject = new Map();
+  certs.forEach(r => {
+    if(r.ref) byRef.set(r.ref, r);
+    const s = normDn(r.p.subject);
+    if(s){ if(!bySubject.has(s)) bySubject.set(s, []); bySubject.get(s).push(r); }
+  });
+  const parentOf = new Map();
+  for(const r of certs){
+    if(isSelfSigned(r)) continue;
+    let p = null, how = '';
+    for(const t of (depMap.get(r.ref) || [])){
+      const c = byRef.get(t);
+      if(c && c !== r){ p = c; how = 'dependencies'; break; }
+    }
+    if(!p){
+      const cand = (bySubject.get(normDn(r.p.issuer)) || []).filter(c => c !== r);
+      if(cand.length){ p = cand[0]; how = 'Issuer＝Subject一致'; }
+    }
+    if(p) parentOf.set(r, {cert:p, how});
+  }
+  return {certs, parentOf};
+}
+
+function buildChains(){
+  const {certs, parentOf} = linkCerts();
+  const walk = leaf => {
+    const list = [leaf], links = [], seen = new Set([leaf]);
+    let cur = leaf, cycle = false;
+    while(parentOf.has(cur)){
+      const {cert, how} = parentOf.get(cur);
+      if(seen.has(cert)){ cycle = true; break; }
+      list.push(cert); links.push(how); seen.add(cert); cur = cert;
+    }
+    return {certs:list, links, cycle};
+  };
+  const hasChild = new Set([...parentOf.values()].map(v => v.cert));
+  const out = [], covered = new Set();
+  const push = w => { w.certs.forEach(c => covered.add(c)); out.push(analyzeChain(w)); };
+  certs.filter(r => !hasChild.has(r)).forEach(r => push(walk(r)));
+  certs.filter(r => !covered.has(r)).forEach(r => { if(!covered.has(r)) push(walk(r)); }); // 循環で先頭が無いもの
+  // 要確認のものを先頭、その中では期限が近い順
+  out.sort((a, b) => (b.issues.length > 0) - (a.issues.length > 0) || (a.days ?? 1e9) - (b.days ?? 1e9));
+  return out;
+}
+
+function analyzeChain(w){
+  const list = w.certs, top = list[list.length - 1], issues = [];
+  const complete = !w.cycle && isSelfSigned(top);
+  if(w.cycle) issues.push('Issuerの参照が循環しています');
+  else if(!complete) issues.push(`発行元「${top.p.issuer || '不明'}」の証明書がCBOMに見つかりません(チェーンが途中までしか辿れません)`);
+  for(let i = 0; i < list.length - 1; i++){
+    const c = list[i], p = list[i + 1];
+    const ct = ts(c.p.to), pt = ts(p.p.to), cf = ts(c.p.from), pf = ts(p.p.from);
+    if(ct !== null && pt !== null && pt < ct) issues.push(`「${dnLabel(p)}」の有効期限が、配下の「${dnLabel(c)}」より先に切れます`);
+    if(cf !== null && pf !== null && cf < pf) issues.push(`「${dnLabel(c)}」の開始日が、発行元「${dnLabel(p)}」より前です`);
+  }
+  list.forEach(r => {
+    if(r.days !== null && r.days < 0) issues.push(`「${dnLabel(r)}」は期限切れです`);
+    r.weak.forEach(x => issues.push(`「${dnLabel(r)}」: ${x}`));
+  });
+  const ds = list.map(r => r.days).filter(d => d !== null);
+  return {certs:list, links:w.links, cycle:w.cycle, complete, issues,
+    days: ds.length ? Math.min(...ds) : null,
+    pq: list.reduce((a, r) => worst(a, r.pq), 'safe')};
+}
+
+const roleOf = (ch, i) => {
+  const n = ch.certs.length, last = i === n - 1;
+  if(n === 1) return isSelfSigned(ch.certs[0]) ? '自己署名' : 'リーフ(発行元不明)';
+  if(i === 0) return 'リーフ';
+  if(last) return ch.complete ? 'ルートCA' : '中間CA(上位不明)';
+  return '中間CA';
+};
+
+function visibleChains(all){
+  const q = norm($('q').value.trim());
+  return all.filter(ch => ch.certs.some(r => (!riskF || RISK[riskF](r)) && (!q || r.search.includes(q))));
+}
+
+/* ---- ツリー表示: ルートCAごとに配下(中間CA→リーフ)を折りたたみツリーで見せる ---- */
+let lastTree = [];
+
+function chainBarHtml(list, info, controls){
+  const bad = list.filter(c => c.issues.length).length;
+  return `<div class="chainBar"><span>${info || `チェーン ${list.length}本(問題なし ${list.length - bad} / 要確認 ${bad})`}</span>${controls || ''}</div>`;
+}
+
+function buildTree(){
+  const {certs, parentOf} = linkCerts();
+  const nodes = new Map(certs.map(r => [r, {cert:r, children:[], how:''}]));
+  const roots = [], missing = new Map();
+  for(const r of certs){
+    const n = nodes.get(r), p = parentOf.get(r);
+    if(p){ nodes.get(p.cert).children.push(n); n.how = p.how; }
+    else if(isSelfSigned(r)) roots.push(n);
+    else { // 発行元がCBOMに無い: Issuerごとに「欠落」ノードを立ててぶら下げる
+      const key = normDn(r.p.issuer) || '?';
+      if(!missing.has(key)) missing.set(key, {cert:null, label:r.p.issuer || '(Issuer不明)', children:[]});
+      missing.get(key).children.push(n);
+    }
+  }
+  roots.push(...missing.values());
+  const seen = new Set();
+  const mark = n => { if(n.cert){ if(seen.has(n.cert)) return; seen.add(n.cert); } n.children.forEach(mark); };
+  roots.forEach(mark);
+  const loop = certs.filter(r => !seen.has(r)); // Issuerが循環していて根に辿り着けないもの
+  if(loop.length){
+    loop.forEach(r => { nodes.get(r).children = []; });
+    roots.push({cert:null, loop:true, label:'(Issuerが循環している証明書)', children:loop.map(r => nodes.get(r))});
+  }
+  const lbl = n => n.cert ? dnLabel(n.cert) : n.label;
+  const sortKids = n => { n.children.sort((a, b) => lbl(a).localeCompare(lbl(b))); n.children.forEach(sortKids); };
+  roots.forEach(sortKids);
+  roots.sort((a, b) => (!a.cert - !b.cert) || lbl(a).localeCompare(lbl(b))); // 実在するルートが先、欠落グループは後
+  return roots;
+}
+
+// 検索・リスク絞り込み: 自分が合致するか、配下に合致があるノードだけ残す
+function filterTree(n, ok){
+  const kids = n.children.map(c => filterTree(c, ok)).filter(Boolean);
+  const keep = n.cert ? (ok(n.cert) || kids.length > 0) : kids.length > 0;
+  return keep ? {...n, children:kids} : null;
+}
+
+function decorate(n, parent){
+  const r = n.cert; n.issues = [];
+  if(r){
+    if(r.days !== null && r.days < 0) n.issues.push('期限切れ');
+    r.weak.forEach(x => n.issues.push(x));
+    if(parent){
+      const ct = ts(r.p.to), pt = ts(parent.p.to), cf = ts(r.p.from), pf = ts(parent.p.from);
+      if(ct !== null && pt !== null && pt < ct) n.issues.push('発行元より有効期限が長い');
+      if(cf !== null && pf !== null && cf < pf) n.issues.push('開始日が発行元より前');
+    }
+  } else n.issues.push(n.loop ? 'Issuerが循環している' : '発行元の証明書がCBOMに無い');
+  n.count = 0; n.below = 0;
+  n.children.forEach(c => { decorate(c, r); n.count += 1 + c.count; n.below += c.issues.length + c.below; });
+}
+
+const nodeRole = n => !n.cert ? (n.loop ? '循環' : '欠落')
+  : isSelfSigned(n.cert) ? (n.children.length ? 'ルートCA' : '自己署名')
+  : n.children.length ? '中間CA' : 'リーフ';
+
+function treeNodeHtml(n){
+  const r = n.cert, role = nodeRole(n), has = n.children.length > 0;
+  const kind = !r ? 'miss' : (role === 'ルートCA' || role === '自己署名') ? 'root' : role === '中間CA' ? 'inter' : 'leaf';
+  const sub = r ? [(r.p.from ? dateStr(r.p.from) : '?') + ' 〜 ' + (r.p.to ? dateStr(r.p.to) : '?'), r.p.sig, r.p.key].filter(Boolean).join(' ・ ') : '';
+  const rk = r ? riskOf(r) : null;
+  const card = `<div class="tn ${kind}${n.issues.length ? ' bad' : ''}"><div class="tnTop">`
+    + `<span class="chev${has ? '' : ' dot'}">${has ? '▸' : '•'}</span>`
+    + `<span class="tag ${kind === 'root' ? 'ok' : kind === 'miss' ? 'ng' : 'na'}">${esc(role)}</span>`
+    + `<span class="dn">${esc(r ? dnLabel(r) : n.label)}</span>`
+    + (r ? daysTag(r.days) + `<span class="tag ${rk.cls}">${esc(rk.t)}</span>` : '')
+    + (has ? `<span class="cnt">配下 ${n.count}枚</span>` : '')
+    + (n.issues.length ? `<span class="tag ng">⚠ ${n.issues.length}</span>` : (n.below ? `<span class="tag warn">配下に⚠ ${n.below}</span>` : ''))
+    + `</div>`
+    + (sub ? `<div class="tnSub">${esc(sub)}</div>` : '')
+    + (n.issues.length ? `<div class="tnIss">${esc(n.issues.join(' / '))}</div>` : '')
+    + `</div>`;
+  if(!has) return `<li>${card}</li>`;
+  return `<li><details open><summary>${card}</summary><ul>${n.children.map(c => treeNodeHtml(c)).join('')}</ul></details></li>`;
+}
+
+// 検索・リスクカードの絞り込みを反映した、装飾済みのツリー(ツリー表示と図で共用)
+function getTreeRoots(){
+  const q = norm($('q').value.trim());
+  const ok = r => (!riskF || RISK[riskF](r)) && (!q || r.search.includes(q));
+  const roots = buildTree().map(n => filterTree(n, ok)).filter(Boolean);
+  roots.forEach(n => decorate(n, null));
+  lastTree = roots;
+  return roots;
+}
+function treeInfo(roots){
+  const nRoot = roots.filter(n => n.cert).length, nMiss = roots.filter(n => !n.cert).length;
+  const total = roots.reduce((a, n) => a + (n.cert ? 1 : 0) + n.count, 0);
+  return `ルート ${nRoot}件 / 証明書 ${total}枚` + (nMiss ? ` / 発行元不明 ${nMiss}グループ` : '');
+}
+
+function renderTree(list){
+  const roots = getTreeRoots();
+  const info = treeInfo(roots);
+  const controls = `<button id="expandAll" class="ghost">すべて開く</button><button id="collapseAll" class="ghost">閉じる</button>`
+    + `<button id="copyChain" class="ghost"${roots.length ? '' : ' disabled'}>テキストでコピー</button>`;
+  const hint = `<p class="hint">緑=ルートCA、青=中間CA、灰=リーフ、赤の破線=CBOMに存在しない発行元。▸/カードのクリックで折りたたみます。親子関係は dependencies、なければ Issuer と Subject の一致で判定します(署名の検証は行いません)。</p>`;
+  $('chainView').innerHTML = chainBarHtml(list, info, controls) + hint + (roots.length
+    ? `<ul class="tree">${roots.map(n => treeNodeHtml(n)).join('')}</ul>`
+    : `<div class="empty">${rows.some(r => r.type === 'certificate') ? '条件に合う証明書がありません。' : (rows.length ? '証明書が見つかりません。' : '')}</div>`);
+}
+
+/* ---- チェーン図: ルートCAごとの階層をSVGで描く(左=発行元 → 右=発行先) ---- */
+const D = {NW:236, NH:56, GX:64, GY:12, PAD:12};
+let diagZoom = 1, diagSel = null, diagNodes = new Map(), diagW = 0, diagH = 0;
+const cnOf = dn => { const m = /(?:^|,)\s*CN\s*=\s*([^,]+)/i.exec(dn || ''); return m ? m[1].trim() : (dn || ''); };
+const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+
+function layoutDiagram(roots){
+  let y = D.PAD, maxD = 0, idc = 0;
+  diagNodes = new Map();
+  const groups = [], edges = [];
+  const place = (n, d, parent) => {
+    n.id = 'dn' + (idc++); n.depth = d; n.parent = parent; diagNodes.set(n.id, n);
+    maxD = Math.max(maxD, d);
+    if(!n.children.length){ n.y = y; y += D.NH + D.GY; }
+    else { n.children.forEach(c => place(c, d + 1, n)); n.y = (n.children[0].y + n.children[n.children.length - 1].y) / 2; }
+    n.x = D.PAD + d * (D.NW + D.GX);
+  };
+  const link = n => n.children.forEach(c => { edges.push({a:n, b:c}); link(c); });
+  roots.forEach(r => {
+    const y0 = y; place(r, 0, null); link(r);
+    groups.push({y0:y0 - 6, y1:y - D.GY + 6}); y += 14;
+  });
+  diagW = D.PAD * 2 + (maxD + 1) * D.NW + maxD * D.GX;
+  diagH = y + D.PAD - 6;
+  return {groups, edges};
+}
+
+function diagNodeSvg(n){
+  const r = n.cert, role = nodeRole(n);
+  const kind = !r ? 'miss' : (role === 'ルートCA' || role === '自己署名') ? 'root' : role === '中間CA' ? 'inter' : 'leaf';
+  const full = r ? dnLabel(r) : n.label;
+  const name = r ? (cnOf(r.p.subject) || dnLabel(r)) : n.label;
+  let l3;
+  if(r){
+    const d = r.days, rk = riskOf(r);
+    const dc = d === null ? '' : d < 0 ? `<tspan class="t-ng">期限切れ ${-d}日</tspan>`
+      : d <= expThresholdDays ? `<tspan class="t-warn">あと ${d}日</tspan>` : `<tspan class="t-ok">${d}日</tspan>`;
+    l3 = dc + (dc ? '<tspan class="t-sub"> ・ </tspan>' : '') + `<tspan class="t-${rk.cls}">${esc(rk.t)}</tspan>`;
+  } else l3 = `<tspan class="t-ng">${n.loop ? 'Issuerが循環' : '発行元の証明書なし'}</tspan>`;
+  const flag = n.issues.length ? `<text class="t-ng" x="${D.NW - 10}" y="16" text-anchor="end">⚠ ${n.issues.length}</text>`
+    : (n.below ? `<text class="t-warn" x="${D.NW - 10}" y="16" text-anchor="end">配下に⚠ ${n.below}</text>` : '');
+  return `<g class="gn ${kind}${n.issues.length ? ' bad' : ''}" data-id="${n.id}" tabindex="0" role="button" aria-label="${esc(full)}" transform="translate(${n.x},${n.y})">`
+    + `<title>${esc(full)}</title><rect class="bg" width="${D.NW}" height="${D.NH}" rx="6"/><rect class="bar" width="5" height="${D.NH}" rx="2"/>`
+    + `<text class="t-role" x="14" y="16">${esc(role)}${n.children.length ? ` ・ 配下 ${n.count}枚` : ''}</text>${flag}`
+    + `<text class="t-name" x="14" y="33">${esc(clip(name, 26))}</text>`
+    + `<text class="t-sm" x="14" y="48">${l3}</text></g>`;
+}
+
+function diagDetailHtml(n){
+  const r = n.cert;
+  if(!r) return `<h2 class="boxTitle">${n.loop ? '循環' : '欠落'}: ${esc(n.label)}</h2>`
+    + `<p class="hint" style="margin:0">${n.loop ? 'これらの証明書はIssuerが循環していて、ルートに辿り着けません。' : 'この発行元の証明書は、読み込んだCBOMに含まれていません。'}配下 ${n.count}枚。</p>`;
+  const p = r.p;
+  const items = [['Subject', p.subject], ['Issuer', p.issuer],
+    ['有効期間', (p.from ? dateStr(p.from) : '?') + ' 〜 ' + (p.to ? dateStr(p.to) : '?')],
+    ['残り', r.days === null ? '' : r.days < 0 ? `期限切れ ${-r.days}日` : `あと ${r.days}日`],
+    ['署名アルゴリズム', p.sig], ['公開鍵', p.key], ['形式', p.fmt], ['出所', r.src], ['bom-ref', r.ref],
+    ['親との関連付け', n.parent && n.parent.cert ? n.how : ''], ['指摘', n.issues.join(' / ')]].filter(x => x[1]);
+  return `<h2 class="boxTitle">${esc(nodeRole(n))}</h2><dl class="kv">${items.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+}
+const DIAG_HINT = '<p class="hint" style="margin:0">ノードをクリックすると、そのルートまでの経路と配下を強調し、詳細をここに表示します。</p>';
+
+// 選択したノードの「ルートまでの経路 + 配下」だけを強調する
+function applyDiagSel(){
+  const svg = $('diagSvg'); if(!svg) return;
+  const sel = diagSel ? diagNodes.get(diagSel) : null, set = new Set();
+  if(sel){
+    for(let a = sel; a; a = a.parent) set.add(a.id);
+    const down = n => { set.add(n.id); n.children.forEach(down); }; down(sel);
+  }
+  svg.querySelectorAll('.gn').forEach(g => {
+    g.classList.toggle('sel', !!sel && g.dataset.id === sel.id);
+    g.classList.toggle('dim', !!sel && !set.has(g.dataset.id));
+  });
+  svg.querySelectorAll('.ed').forEach(e => {
+    const on = !!sel && set.has(e.dataset.a) && set.has(e.dataset.b);
+    e.classList.toggle('hl', on); e.classList.toggle('dim', !!sel && !on);
+  });
+  $('diagDetail').innerHTML = sel ? diagDetailHtml(sel) : DIAG_HINT;
+}
+
+function setDiagZoom(z){
+  diagZoom = Math.min(2, Math.max(0.3, z));
+  const svg = $('diagSvg'); if(!svg) return;
+  svg.setAttribute('width', Math.round(diagW * diagZoom)); svg.setAttribute('height', Math.round(diagH * diagZoom));
+}
+function zoomDiagram(k){
+  const wrapW = ($('diagWrap')?.clientWidth || 0) - 4;
+  if(k === 'fit') setDiagZoom(wrapW > 0 ? Math.min(1, wrapW / diagW) : 1);
+  else if(k === '1') setDiagZoom(1);
+  else setDiagZoom(diagZoom * (k === 'in' ? 1.25 : 0.8));
+}
+
+function renderDiagram(list){
+  const roots = getTreeRoots();
+  diagSel = null;
+  const controls = `<span class="segs"><button class="ghost" data-zoom="out" aria-label="縮小">−</button><button class="ghost" data-zoom="in" aria-label="拡大">＋</button>`
+    + `<button class="ghost" data-zoom="fit">全体</button><button class="ghost" data-zoom="1">100%</button></span>`;
+  const legend = `<div class="legend"><span><i class="lg-root"></i>ルートCA</span><span><i class="lg-inter"></i>中間CA</span><span><i class="lg-leaf"></i>リーフ</span>`
+    + `<span><i class="lg-miss"></i>CBOMに無い発行元</span><span>黄枠=要確認</span><span>矢印: 発行元 → 発行先</span>`
+    + `<span>実線=dependencies / 点線=Issuer＝Subject一致で推定</span></div>`;
+  if(!roots.length){
+    $('chainView').innerHTML = chainBarHtml(list, treeInfo(roots)) + `<div class="empty">${rows.some(r => r.type === 'certificate') ? '条件に合う証明書がありません。' : (rows.length ? '証明書が見つかりません。' : '')}</div>`;
+    return;
+  }
+  const {groups, edges} = layoutDiagram(roots);
+  const all = []; const collect = n => { all.push(n); n.children.forEach(collect); }; roots.forEach(collect);
+  const edgeSvg = edges.map(({a, b}) => {
+    const x1 = a.x + D.NW, y1 = a.y + D.NH / 2, x2 = b.x - 2, y2 = b.y + D.NH / 2, mx = (x1 + x2) / 2;
+    const cls = !a.cert ? 'miss' : (b.how && b.how !== 'dependencies' ? 'inf' : '');
+    return `<path class="ed ${cls}" data-a="${a.id}" data-b="${b.id}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#arr)"/>`;
+  }).join('');
+  const grpSvg = groups.map(g => `<rect class="grp" x="4" y="${g.y0}" width="${diagW - 8}" height="${g.y1 - g.y0}" rx="8"/>`).join('');
+  const z0 = Math.max(0.6, Math.min(1, (($('chainView').clientWidth || 0) - 4) / diagW));
+  diagZoom = z0;
+  $('chainView').innerHTML = chainBarHtml(list, treeInfo(roots), controls) + legend
+    + `<div id="diagWrap"><svg id="diagSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${diagW} ${diagH}" width="${Math.round(diagW * z0)}" height="${Math.round(diagH * z0)}" role="group" aria-label="証明書チェーン図">`
+    + `<defs><marker id="arr" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="arrow" d="M0,0 L8,4 L0,8 z"/></marker></defs>`
+    + grpSvg + edgeSvg + all.map(diagNodeSvg).join('') + `</svg></div>`
+    + `<div class="panel" id="diagDetail" style="margin:10px 0 0">${DIAG_HINT}</div>`;
+}
+
+function treeText(roots){
+  const out = [];
+  const line = n => `[${nodeRole(n)}] ${n.cert ? dnLabel(n.cert) : n.label}`
+    + (n.cert && n.cert.days !== null ? (n.cert.days < 0 ? ` (期限切れ ${-n.cert.days}日)` : ` (あと${n.cert.days}日)`) : '')
+    + (n.issues.length ? `  ⚠ ${n.issues.join(' / ')}` : '');
+  const walk = (n, prefix, last, top) => {
+    out.push(top ? line(n) : prefix + (last ? '└─ ' : '├─ ') + line(n));
+    const np = top ? '' : prefix + (last ? '   ' : '│  ');
+    n.children.forEach((c, i) => walk(c, np, i === n.children.length - 1, false));
+  };
+  roots.forEach(n => { walk(n, '', true, true); out.push(''); });
+  return out.join('\n').trim();
+}
+
+function chainCsvRows(list){
+  const head = ['チェーン','段','役割','Subject','Issuer','開始日','有効期限','残り日数','署名アルゴリズム','公開鍵','リスク','チェーン状態','指摘'];
+  const body = [];
+  list.forEach((ch, n) => ch.certs.forEach((r, i) => body.push([
+    n + 1, i + 1, roleOf(ch, i), r.p.subject, r.p.issuer, r.p.from ? dateStr(r.p.from) : '', r.p.to ? dateStr(r.p.to) : '',
+    r.days ?? '', r.p.sig, r.p.key, riskOf(r).t, ch.complete ? '完全' : '不完全', i === 0 ? ch.issues.join(' / ') : ''])));
+  return [head, ...body];
+}
+
 const TYPE_LABEL = {certificate:'証明書', algorithm:'アルゴリズム', material:'鍵・関連素材', protocol:'プロトコル'};
 const C = (k, t, v, h, cls, x) => ({k, t, v, h, cls, x});
 const cSrc  = C('src', '出所', r => r.src);
@@ -422,6 +827,8 @@ const TABS = [
     C('key', '公開鍵', r => r.p.key),
     cRisk,
     C('fmt', '形式', r => r.p.fmt)]},
+  {id:'chain', t:'証明書チェーン', cols:[]}, // 表ではなくツリー表示(renderTree)
+  {id:'diagram', t:'チェーン図', cols:[]},    // SVGの階層図(renderDiagram)
   {id:'algorithm', t:'アルゴリズム', cols:[
     cSrc, cName,
     C('primitive', '用途', r => r.p.primitive),
@@ -495,10 +902,21 @@ function render(){
   banner.textContent = sec ? `鍵の値(秘密鍵などの本体)を含む可能性がある資産が ${sec}件あります。この画面では値を表示していませんが、該当するCBOMファイルの共有や保管には注意してください。` : '';
 
   // タブ
+  const allChains = buildChains();
   $('tabs').innerHTML = TABS.map(t => {
-    const c = t.id === 'all' ? rows.length : rows.filter(r => r.type === t.id).length;
+    const c = t.id === 'all' ? rows.length : (t.id === 'chain' || t.id === 'diagram') ? allChains.length : rows.filter(r => r.type === t.id).length;
     return `<button class="tab" role="tab" data-t="${t.id}" aria-selected="${t.id === tabId}">${t.t} (${c})</button>`;
   }).join('');
+
+  // 証明書チェーンタブは表ではなくツリーで表示する
+  const isChain = tabId === 'chain' || tabId === 'diagram';
+  $('chainView').style.display = isChain ? 'block' : 'none';
+  $('tableWrap').style.display = isChain ? 'none' : '';
+  if(isChain){
+    lastChains = visibleChains(allChains); // CSV出力用
+    if(tabId === 'diagram') renderDiagram(lastChains); else renderTree(lastChains);
+    return;
+  }
 
   // 表
   const {tab, list, key} = visibleRows();
@@ -534,14 +952,53 @@ $('expYears').addEventListener('input', () => {
 });
 
 $('csv').addEventListener('click', () => {
-  const {tab, list} = visibleRows();
   const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const head = tab.cols.map(c => q(c.t)).join(',');
-  const body = list.map(r => tab.cols.map(c => q(c.x ? c.x(r) : c.v(r))).join(',')).join('\r\n');
+  let id, text;
+  if(tabId === 'chain' || tabId === 'diagram'){
+    id = tabId;
+    text = chainCsvRows(lastChains).map(r => r.map(q).join(',')).join('\r\n');
+  } else {
+    const {tab, list} = visibleRows();
+    id = tab.id;
+    const head = tab.cols.map(c => q(c.t)).join(',');
+    const body = list.map(r => tab.cols.map(c => q(c.x ? c.x(r) : c.v(r))).join(',')).join('\r\n');
+    text = head + '\r\n' + body;
+  }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['\ufeff' + head + '\r\n' + body], {type:'text/csv;charset=utf-8'}));
-  a.download = `crypto-inventory-${tab.id}.csv`;
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + text], {type:'text/csv;charset=utf-8'}));
+  a.download = `crypto-inventory-${id}.csv`;
   a.click(); URL.revokeObjectURL(a.href);
+});
+
+// \u8868\u793a\u5207\u66ff(\u30c4\u30ea\u30fc/\u30c1\u30a7\u30fc\u30f3\u5225)\u3068\u3001\u30c4\u30ea\u30fc\u306e\u5168\u5c55\u958b\u30fb\u5168\u6298\u308a\u305f\u305f\u307f
+$('chainView').addEventListener('click', e => {
+  const g = e.target.closest('.gn');
+  if(g){ diagSel = (diagSel === g.dataset.id) ? null : g.dataset.id; applyDiagSel(); return; }
+  const zb = e.target.closest('[data-zoom]');
+  if(zb){ zoomDiagram(zb.dataset.zoom); return; }
+  if(e.target.closest('#diagSvg') && diagSel){ diagSel = null; applyDiagSel(); return; } // 余白クリックで選択解除
+  if(e.target.closest('#expandAll')) $('chainView').querySelectorAll('details').forEach(d => { d.open = true; });
+  if(e.target.closest('#collapseAll')) $('chainView').querySelectorAll('details').forEach(d => { d.open = false; });
+});
+
+// \u30c1\u30a7\u30fc\u30f3\u3092\u30c6\u30ad\u30b9\u30c8(\u30c4\u30ea\u30fc)\u3067\u30af\u30ea\u30c3\u30d7\u30dc\u30fc\u30c9\u3078
+$('chainView').addEventListener('click', async e => {
+  const b = e.target.closest('#copyChain'); if(!b) return;
+  const text = treeText(lastTree);
+  try{ await navigator.clipboard.writeText(text); }
+  catch(_){
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); } finally { ta.remove(); }
+  }
+  const old = b.textContent; b.textContent = '\u30b3\u30d4\u30fc\u3057\u307e\u3057\u305f';
+  setTimeout(() => { b.textContent = old; }, 1500);
+});
+
+// 図のノードをキーボード(Enter/Space)でも選択できるようにする
+$('chainView').addEventListener('keydown', e => {
+  const g = e.target.closest && e.target.closest('.gn');
+  if(g && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); g.dispatchEvent(new MouseEvent('click', {bubbles:true})); }
 });
 
 render();
