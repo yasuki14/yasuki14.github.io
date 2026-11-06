@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- CSP: default-src 'none' で外部通信・外部読み込み・インラインイベントを全面禁止し、スクリプトはハッシュが一致するものだけ実行する。
      スクリプトを編集するとハッシュが合わなくなり画面が初期化されない。その場合はブラウザのコンソールに出る新しいハッシュで script-src を差し替えること。 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-iujepelmbrbffuXA6+fc4Bacc17GV1Qcxx1nhDEKWXc='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vQBaThIwl8Qdtbv+0BCilxqw4kYsuBlw4/ZRg42txzw='; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <title>CBOM Visualizer</title>
 <style>
   :root{
@@ -60,6 +60,7 @@
   th[aria-sort="descending"]::after{content:" ▼";font-size:10px}
   td.dn{font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all;min-width:200px}
   td.num{white-space:nowrap} td.date{white-space:nowrap}
+  td.src{min-width:180px;word-break:break-all}
   .tag{display:inline-block;padding:1px 8px;margin:1px 2px 1px 0;border-radius:10px;font-size:12px;white-space:nowrap}
   .tag.ng{background:var(--ng-bg);color:var(--ng)}
   .tag.warn{background:var(--warn-bg);color:var(--warn)}
@@ -73,6 +74,14 @@
   .kv dd{margin:0;word-break:break-all}
   .kv dd.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
   .drop{outline:2px dashed var(--accent);outline-offset:-6px}
+  /* 証明書タブの表示形式(表/階層表示/チェーン表示) */
+  #certViews{display:none;margin:0 16px 8px;align-items:center;gap:8px;font-size:13px;color:var(--sub)}
+  .vseg{display:inline-flex}
+  .vseg button{background:transparent;color:var(--accent);border:1px solid var(--accent);padding:4px 14px;border-radius:0}
+  .vseg button:first-child{border-radius:4px 0 0 4px}
+  .vseg button:last-child{border-radius:0 4px 4px 0}
+  .vseg button+button{border-left:0}
+  .vseg button[aria-pressed="true"]{background:var(--accent);color:var(--btn-ink)}
   /* 証明書チェーン */
   #chainView{margin:0 16px 12px;display:none}
   .chainBar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px;color:var(--sub);font-size:13px}
@@ -164,6 +173,8 @@
 
 <div class="cards" id="cards"></div>
 <div class="tabs" id="tabs" role="tablist"></div>
+<div id="certViews" role="group" aria-label="証明書の表示形式"><span>表示</span>
+  <span class="vseg"><button data-v="table">表</button><button data-v="chain">階層</button><button data-v="diagram">チェーン</button></span></div>
 
 <section class="panel">
   <div class="row">
@@ -175,6 +186,8 @@
         <input id="expYears" type="number" min="0" step="1" value="2" style="width:64px">年以内
       </span>
     </label>
+    <label class="inline" title="同じ内容の行を1つにまとめます。証明書=公開鍵の値が同じ、公開鍵(鍵・関連素材)=鍵の値が同じ、アルゴリズム/プロトコル=表示内容がすべて同じ。出所は全て残します。公開鍵の値が無い証明書・鍵はまとめません。"><input type="checkbox" id="dedupe" checked>重複をまとめる</label>
+    <span id="dedupeInfo" class="hint" style="margin:0 0 4px"></span>
     <button id="csv" class="ghost" disabled>CSVで保存</button>
   </div>
 </section>
@@ -197,6 +210,7 @@ let rows = [], errors = [], bomCount = 0;
 let depMap = new Map(); // bom-ref -> dependsOn[](証明書チェーンの構築に使う)
 let lastChains = [];    // 直近に表示したチェーン(コピー/CSV用)
 let tabId = 'all', sortK = null, sortDir = 1, riskF = '';
+let certView = 'table'; // 証明書タブの表示形式: 'table'(表) / 'chain'(階層表示) / 'diagram'(チェーン表示)
 
 /* ================= 判定ルール ================= */
 const RE_PQ   = /ml-?kem|ml-?dsa|slh-?dsa|fn-?dsa|kyber|dilithium|sphincs|falcon|xmss|(^|[^a-z])(lms|hss)([^a-z]|$)|frodo|(^|[^a-z])hqc|mceliece|(^|[^a-z])bike/;
@@ -268,10 +282,11 @@ function flat(list){
 
 // 出所: CBOM内の evidence.occurrences[].location(その暗号資産が検出されたソースファイル)を優先する。
 // 記載がなければ、読み込んだCBOMファイル名にフォールバックする。
-function srcOf(c, fallback){
+function srcListOf(c, fallback){
   const locs = (c.evidence?.occurrences || []).map(o => o?.location).filter(l => typeof l === 'string' && l);
-  return locs.length ? uniq(locs).join('; ') : fallback;
+  return locs.length ? uniq(locs) : [fallback];
 }
+function srcOf(c, fallback){ return srcListOf(c, fallback).join('; '); }
 
 function ingest(bom, src){
   if(!bom || !Array.isArray(bom.components)) throw new Error('components がありません(CBOMではない可能性)');
@@ -329,6 +344,7 @@ function ingest(bom, src){
         p:{mtype:p.type || '', algo, size:p.size ?? null, state:p.state || '', exp:p.expirationDate || '', fmt:p.format || ''},
         days:daysLeft(p.expirationDate), pq:pqOf(text), weak:weakOf(text),
         secret:!!p.value && secretType,
+        kkey: p.type === 'public-key' ? keyId(p.value) : null, // 公開鍵の値(重複判定用)。秘密鍵などの値は持たない
         detail:[p.type, algo, p.size ? p.size + ' bit' : ''].filter(Boolean).join(' ')};
     }
     else if(cp.assetType === 'protocol'){
@@ -345,7 +361,7 @@ function ingest(bom, src){
         detail:[p.type, p.version].filter(Boolean).join(' ')};
     }
     if(!r) continue;
-    r.name = c.name || ''; r.ref = c['bom-ref'] || ''; r.src = srcOf(c, src); r.secret = !!(r.secret || secretBlock);
+    r.name = c.name || ''; r.ref = c['bom-ref'] || ''; r.src = srcOf(c, src); r.srcs = srcListOf(c, src); r.secret = !!(r.secret || secretBlock);
     r.warnAll = [...r.weak, ...(r.secret ? ['鍵の値を含む'] : [])];
     r.search = norm([r.type, r.name, r.detail, r.src, ...Object.values(r.p).flat()].join(' '));
     rows.push(r); n++;
@@ -511,8 +527,46 @@ const ts = s => { const t = Date.parse(s); return isNaN(t) ? null : t; };
 const dateStr = s => { const t = ts(s); return t === null ? String(s ?? '') : new Date(t).toISOString().slice(0, 10); }; // エスケープ無しの日付文字列
 
 // 親(発行元)の特定: ①dependencies の dependsOn にある証明書 ②Issuer＝Subject の一致
-let dedupeOn = true; // 公開鍵が同じ証明書を1つにまとめる(証明書チェーン/チェーン図タブのみ。他のタブの表は変えない)
-let linkMemo = null, chainMemo = null; // rows/depMap/dedupeOn が変わらない間は結果を使い回す(描画ごとの再計算を避ける)
+let dedupeOn = true;       // 重複をまとめる(全タブ共通の設定)
+let dedupeMemo = null, linkMemo = null, chainMemo = null; // rows/depMap/設定 が変わらない間は結果を使い回す(描画ごとの再計算を避ける)
+
+// 重複のまとめ。同じものを代表1件(r.merged に残りを保持)にまとめ、残りには r.dupOf(代表)を付ける。
+// 何を「同じ」とみなすか:
+//   証明書 ......... 公開鍵の値が同じ(再発行・クロス署名・複数箇所に置かれた同一証明書)。代表は自己署名(ルート)優先 → 有効期限が新しいもの
+//   公開鍵 ......... 鍵・関連素材のうち public-key で、鍵の値が同じ
+//   アルゴリズム/プロトコル ... 表示している内容がすべて同じ(出所だけが違う)
+// 鍵の値が無い証明書・鍵はまとめない。秘密の値を含むものは、警告が埋もれないようまとめない。
+function ensureDedupe(){
+  if(dedupeMemo && dedupeMemo.rows === rows && dedupeMemo.n === rows.length && dedupeMemo.dd === dedupeOn) return dedupeMemo;
+  rows.forEach(r => { r.merged = null; r.mergeDiff = false; r.dupOf = null; }); // 切替のたびに状態を作り直す
+  if(dedupeOn){
+    const groups = new Map();
+    for(const r of rows){
+      if(r.secret) continue;
+      let k = null;
+      if(r.type === 'certificate') k = r.kkey ? 'c:' + r.kkey : null;
+      else if(r.type === 'material') k = r.kkey ? 'm:' + r.kkey : null;
+      else if(r.type === 'algorithm') k = 'a:' + JSON.stringify([r.name, r.p.primitive, r.p.fam, r.p.param, r.p.curve, r.p.cl, r.p.ql, r.p.funcs, r.p.oid]);
+      else if(r.type === 'protocol') k = 'p:' + JSON.stringify([r.name, r.p.ptype, r.p.version, r.p.suites]);
+      if(k === null) continue;
+      const g = groups.get(k);
+      if(g) g.push(r); else groups.set(k, [r]);
+    }
+    for(const g of groups.values()){
+      if(g.length < 2) continue;
+      const sorted = g[0].type === 'certificate'
+        ? g.slice().sort((a, b) => (isSelfSigned(b) - isSelfSigned(a)) || ((ts(b.p.to) ?? 0) - (ts(a.p.to) ?? 0)))
+        : g;
+      const rep = sorted[0];
+      rep.merged = sorted.slice(1);
+      if(rep.type === 'certificate') rep.mergeDiff = rep.merged.some(m => normDn(m.p.subject) !== normDn(rep.p.subject) || normDn(m.p.issuer) !== normDn(rep.p.issuer));
+      rep.merged.forEach(m => { m.dupOf = rep; });
+    }
+  }
+  dedupeMemo = {rows, n:rows.length, dd:dedupeOn, live: dedupeOn ? rows.filter(r => !r.dupOf) : rows};
+  return dedupeMemo;
+}
+const live = () => ensureDedupe().live; // 画面に出す行(まとめられた重複を除いたもの)
 function linkCerts(){
   if(linkMemo && linkMemo.rows === rows && linkMemo.n === rows.length && linkMemo.dep === depMap && linkMemo.dd === dedupeOn) return linkMemo.v;
   const v = linkCertsRaw();
@@ -521,29 +575,11 @@ function linkCerts(){
   return v;
 }
 function linkCertsRaw(){
+  ensureDedupe();
   const all = rows.filter(r => r.type === 'certificate');
-  // 公開鍵が同じ証明書を、代表1枚(r.merged に残りを保持)にまとめる。再発行・クロス署名・複数箇所に置かれた同一証明書が対象。
-  // 代表は「自己署名(ルート)を優先 → 有効期限が新しいもの」。まとめられた証明書は canon に記録し、親子関係の解決では代表として扱う。
-  const canon = new Map();
-  all.forEach(r => { r.merged = null; r.mergeDiff = false; }); // 切替のたびに状態を作り直す
-  if(dedupeOn){
-    const groups = new Map();
-    for(const r of all){
-      if(!r.kkey) continue;
-      const g = groups.get(r.kkey);
-      if(g) g.push(r); else groups.set(r.kkey, [r]);
-    }
-    for(const g of groups.values()){
-      if(g.length < 2) continue;
-      const sorted = g.slice().sort((a, b) => (isSelfSigned(b) - isSelfSigned(a)) || ((ts(b.p.to) ?? 0) - (ts(a.p.to) ?? 0)));
-      const rep = sorted[0];
-      rep.merged = sorted.slice(1);
-      rep.mergeDiff = rep.merged.some(m => normDn(m.p.subject) !== normDn(rep.p.subject) || normDn(m.p.issuer) !== normDn(rep.p.issuer));
-      rep.merged.forEach(m => canon.set(m, rep));
-    }
-  }
-  const cn = r => canon.get(r) || r;
-  const certs = all.filter(r => !canon.has(r));
+  // 公開鍵が同じ証明書は代表1枚にまとめてある(ensureDedupe)。親子関係の解決では、まとめられた証明書も代表として扱う。
+  const cn = r => r.dupOf || r;
+  const certs = all.filter(r => !r.dupOf);
   const byRef = new Map(), bySubject = new Map();
   all.forEach(r => {
     if(r.ref) byRef.set(r.ref, cn(r));
@@ -578,7 +614,7 @@ function linkCertsRaw(){
   const skip = new Set(certs.filter(r => depth.get(r) > MAX_CHAIN_DEPTH));
   skip.forEach(r => parentOf.delete(r));
   return {certs: skip.size ? certs.filter(r => !skip.has(r)) : certs, parentOf, skipped: skip.size,
-    removed: canon.size, noValue: all.filter(r => r.kbasis !== 'value').length}; // noValue: 公開鍵の値が無く、値では重複判定できない証明書
+    removed: all.length - certs.length, noValue: all.filter(r => r.kbasis !== 'value').length}; // noValue: 公開鍵の値が無く、値では重複判定できない証明書
 }
 
 function buildChains(){
@@ -652,7 +688,8 @@ let lastTree = [];
 // 同一公開鍵でまとめた証明書の表示用ヘルパ
 const kshort = k => k.length > 24 ? k.slice(0, 12) + '…' + k.slice(-8) : k;
 const keyLabel = r => r.kkey ? kshort(r.kkey) : '';
-const allSrc = r => uniq([r.src, ...(r.merged || []).map(m => m.src)].filter(Boolean)).join('; ');
+const allSrcList = r => uniq([...(r.srcs || [r.src]), ...(r.merged || []).flatMap(m => m.srcs || [m.src])].filter(Boolean));
+const allSrc = r => allSrcList(r).join('; '); // CSV・検索・詳細パネルは「; 」区切りのまま
 const nMerged = r => (r && r.merged) ? r.merged.length : 0;
 const mergedBrief = r => {
   const a = r.merged.slice(0, 3).map(m => (m.p.serial ? '#' + m.p.serial + ' ' : '') + '〜' + (m.p.to ? dateStr(m.p.to) : '?'));
@@ -675,7 +712,6 @@ function chainBarHtml(list, info, controls){
   const bad = list.filter(c => c.issues.length).length, lk = linkCerts(), sk = lk.skipped;
   return `<div class="chainBar"><span>${info || `チェーン ${list.length}本(問題なし ${list.length - bad} / 要確認 ${bad})`}</span>`
     + (sk ? `<span class="tag warn" title="ルートからの段数が上限を超える証明書は、構造表示(ツリー・図・チェーン)から省略しています。表・CSVには含まれます。">階層が${MAX_CHAIN_DEPTH}段を超える ${sk} 枚は省略</span>` : '')
-    + `<label class="inline" title="CBOMの公開鍵の値(subjectPublicKeyRef 先の relatedCryptoMaterialProperties.value)が同じ証明書を、1つにまとめて表示します。再発行・クロス署名・複数箇所にある同一証明書が対象です。"><input type="checkbox" id="dedupe"${dedupeOn ? ' checked' : ''}>公開鍵が同じ証明書をまとめる</label>`
     + (dedupeOn && lk.removed ? `<span class="tag ok">同一公開鍵 ${lk.removed}枚を統合</span>` : '')
     + (dedupeOn && lk.noValue ? `<span class="tag na" title="公開鍵の値がCBOMに無い証明書は重複判定の対象外で、まとめずにそのまま表示します。">公開鍵の値なし ${lk.noValue}枚(統合対象外)</span>` : '')
     + `${controls || ''}</div>`;
@@ -914,7 +950,7 @@ function renderDiagram(list){
   const z0 = Math.max(0.6, Math.min(1, (($('chainView').clientWidth || 0) - 4) / diagW));
   diagZoom = z0;
   $('chainView').innerHTML = chainBarHtml(list, treeInfo(roots), controls) + legend
-    + `<div id="diagWrap"><svg id="diagSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${diagW} ${diagH}" width="${Math.round(diagW * z0)}" height="${Math.round(diagH * z0)}" role="group" aria-label="証明書チェーン図">`
+    + `<div id="diagWrap"><svg id="diagSvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${diagW} ${diagH}" width="${Math.round(diagW * z0)}" height="${Math.round(diagH * z0)}" role="group" aria-label="チェーン表示">`
     + `<defs><marker id="arr" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="arrow" d="M0,0 L8,4 L0,8 z"/></marker></defs>`
     + grpSvg + edgeSvg + all.map(diagNodeSvg).join('') + `</svg></div>`
     + `<div class="panel" id="diagDetail" style="margin:10px 0 0">${DIAG_HINT}</div>`;
@@ -946,8 +982,10 @@ function chainCsvRows(list){
 
 const TYPE_LABEL = {certificate:'証明書', algorithm:'アルゴリズム', material:'鍵・関連素材', protocol:'プロトコル'};
 const C = (k, t, v, h, cls, x) => ({k, t, v, h, cls, x});
-const cSrc  = C('src', '出所', r => r.src);
+const cSrc  = C('src', '出所', r => allSrc(r), r => allSrcList(r).map(esc).join('<br>'), 'src', r => allSrc(r)); // 表は1か所ずつ改行、CSVは「; 」区切り
 const cName = C('name', '名前', r => r.name);
+const cDup  = C('dup', '統合', r => nMerged(r) ? nMerged(r) + 1 : '',
+  r => nMerged(r) ? `<span class="tag ${r.mergeDiff ? 'warn' : 'ok'}" title="同じ内容の${nMerged(r) + 1}件を1行にまとめています(出所は全て表示)">×${nMerged(r) + 1}</span>` : '', 'num');
 const cDays = C('days', '残り日数', r => r.days, r => daysTag(r.days), 'num');
 const cRisk = C('risk', 'リスク', r => riskOf(r).lv,
   r => `<span class="tag ${riskOf(r).cls}">${esc(riskOf(r).t)}</span>`, '',
@@ -955,9 +993,9 @@ const cRisk = C('risk', 'リスク', r => riskOf(r).lv,
 
 const TABS = [
   {id:'all', t:'すべて', cols:[
-    cSrc, C('type', '種別', r => TYPE_LABEL[r.type]), cName, C('detail', '詳細', r => r.detail), cRisk]},
+    cSrc, C('type', '種別', r => TYPE_LABEL[r.type]), cName, cDup, C('detail', '詳細', r => r.detail), cRisk]},
   {id:'certificate', t:'証明書', sort:'risk', cols:[
-    cSrc, cName,
+    cSrc, cName, cDup,
     C('subject', 'Subject', r => r.p.subject, null, 'dn'),
     C('issuer', 'Issuer', r => r.p.issuer, null, 'dn'),
     C('from', '開始日', r => r.p.from, r => fmtDate(r.p.from), 'date'),
@@ -967,17 +1005,15 @@ const TABS = [
     C('key', '公開鍵', r => r.p.key),
     cRisk,
     C('fmt', '形式', r => r.p.fmt)]},
-  {id:'chain', t:'証明書チェーン', cols:[]}, // 表ではなくツリー表示(renderTree)
-  {id:'diagram', t:'チェーン図', cols:[]},    // SVGの階層図(renderDiagram)
   {id:'algorithm', t:'アルゴリズム', cols:[
-    cSrc, cName,
+    cSrc, cName, cDup,
     C('primitive', '用途', r => r.p.primitive),
     C('param', 'ファミリ/パラメータ', r => [r.p.fam, r.p.param].filter(Boolean).join(' ')),
     C('curve', '曲線', r => r.p.curve),
     C('funcs', '機能', r => r.p.funcs),
     cRisk]},
   {id:'material', t:'鍵・関連素材', cols:[
-    cSrc, cName,
+    cSrc, cName, cDup,
     C('mtype', '種類', r => r.p.mtype),
     C('algo', 'アルゴリズム', r => r.p.algo),
     C('size', 'サイズ(bit)', r => r.p.size),
@@ -986,7 +1022,7 @@ const TABS = [
     C('fmt', '形式', r => r.p.fmt),
     cRisk]},
   {id:'protocol', t:'プロトコル', cols:[
-    cSrc, cName,
+    cSrc, cName, cDup,
     C('ptype', '種類', r => r.p.ptype),
     C('version', 'バージョン', r => r.p.version),
     C('suites', '暗号スイート/構成要素', r => r.p.suites.length,
@@ -1007,7 +1043,7 @@ const RISK = {
 function visibleRows(){
   const tab = TABS.find(t => t.id === tabId);
   const q = norm($('q').value.trim());
-  let list = rows.filter(r => (tab.id === 'all' || r.type === tab.id) && (!riskF || RISK[riskF](r)) && (!q || r.search.includes(q)));
+  let list = live().filter(r => (tab.id === 'all' || r.type === tab.id) && rowMatch(r, q));
   const key = sortK ?? tab.sort;
   const col = tab.cols.find(c => c.k === key);
   if(col){
@@ -1034,9 +1070,9 @@ function render(){
 }
 function renderInner(){
   // カード
-  const n = f => rows.filter(f).length;
+  const n = f => live().filter(f).length;
   const defs = [
-    {f:'', l:'資産の総数', n:rows.length},
+    {f:'', l:'資産の総数', n:live().length},
     {f:'pq', l:'量子脆弱', n:n(RISK.pq)},
     {f:'broken', l:'危殆化', n:n(RISK.broken)},
     {f:'expired', l:'期限切れ', n:n(RISK.expired)},
@@ -1052,19 +1088,26 @@ function renderInner(){
   banner.textContent = sec ? `鍵の値(秘密鍵などの本体)を含む可能性がある資産が ${sec}件あります。この画面では値を表示していませんが、該当するCBOMファイルの共有や保管には注意してください。` : '';
 
   // タブ
-  const allChains = buildChains();
+  const view = tabId === 'certificate' ? certView : 'table'; // 証明書タブだけ表示形式を切り替えられる
+  const isChain = view !== 'table';
+  const allChains = isChain ? buildChains() : null;
   $('tabs').innerHTML = TABS.map(t => {
-    const c = t.id === 'all' ? rows.length : (t.id === 'chain' || t.id === 'diagram') ? allChains.length : rows.filter(r => r.type === t.id).length;
+    const c = t.id === 'all' ? live().length : live().filter(r => r.type === t.id).length;
     return `<button class="tab" role="tab" data-t="${t.id}" aria-selected="${t.id === tabId}">${t.t} (${c})</button>`;
   }).join('');
 
+  // 重複をまとめた件数(表示中のタブ分)
+  const dupN = rows.filter(r => r.dupOf && (tabId === 'all' || r.type === tabId)).length;
+  $('dedupeInfo').textContent = !dedupeOn || !rows.length ? '' : dupN ? `${dupN}件をまとめて非表示` : 'まとめる重複はありません';
+
   // 証明書チェーンタブは表ではなくツリーで表示する
-  const isChain = tabId === 'chain' || tabId === 'diagram';
+  $('certViews').style.display = tabId === 'certificate' ? 'flex' : 'none';
+  $('certViews').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === certView)));
   $('chainView').style.display = isChain ? 'block' : 'none';
   $('tableWrap').style.display = isChain ? 'none' : '';
   if(isChain){
     lastChains = visibleChains(allChains); // CSV出力用
-    if(tabId === 'diagram') renderDiagram(lastChains); else renderTree(lastChains);
+    if(view === 'diagram') renderDiagram(lastChains); else renderTree(lastChains);
     return;
   }
 
@@ -1111,8 +1154,8 @@ $('csv').addEventListener('click', () => {
     return '"' + s.replace(/"/g, '""') + '"';
   };
   let id, text;
-  if(tabId === 'chain' || tabId === 'diagram'){
-    id = tabId;
+  if(tabId === 'certificate' && certView !== 'table'){
+    id = 'certificate-' + (certView === 'chain' ? 'hierarchy' : 'chain');
     text = chainCsvRows(lastChains).map(r => r.map(q).join(',')).join('\r\n');
   } else {
     const {tab, list} = visibleRows();
@@ -1152,12 +1195,14 @@ $('chainView').addEventListener('click', async e => {
   setTimeout(() => { b.textContent = old; }, 1500);
 });
 
-// 「公開鍵が同じ証明書をまとめる」の切替(証明書チェーン/チェーン図)
-$('chainView').addEventListener('change', e => {
-  if(e.target.id !== 'dedupe') return;
-  dedupeOn = e.target.checked; diagSel = null; render();
-  $('dedupe')?.focus(); // 再描画でチェックボックスが作り直されるので、キーボード操作が途切れないようフォーカスを戻す
+// 証明書タブの表示形式の切替(表/階層表示/チェーン表示)
+$('certViews').addEventListener('click', e => {
+  const b = e.target.closest('button[data-v]'); if(!b) return;
+  certView = b.dataset.v; diagSel = null; render();
 });
+
+// 「重複をまとめる」(全タブ共通)。まとめた結果で親子関係・件数・図が変わるので、図の選択は解除する
+$('dedupe').addEventListener('change', e => { dedupeOn = e.target.checked; diagSel = null; render(); });
 
 // 図のノードをキーボード(Enter/Space)でも選択できるようにする
 $('chainView').addEventListener('keydown', e => {
