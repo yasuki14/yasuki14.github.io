@@ -308,7 +308,7 @@ $("#go").onclick=async()=>{
   if(running){ctrl.abort();return}
   const ids=$("#list").value.split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
   if(!ids.length)return;
-  const delay=300;
+  const delay=100;
   ctrl=new AbortController();setBusy(true);items=[];errors=[];openIds.clear();prog={done:0,total:ids.length};
   render();
   for(let i=0;i<ids.length;i++){
